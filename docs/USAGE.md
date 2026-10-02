@@ -123,3 +123,32 @@ The diff doesn't just print the change — it raises a proper finding
 with severity and confidence, ready for the case timeline. Scan
 results include service banners, TLS certificate details, and
 HTTP metadata where available.
+
+## What's next — v0.3: domain investigation
+
+> **Scenario continues:** the scan found a web server, and now you
+> want the full picture on its domain — who runs it, how mail and DNS
+> are set up, whether the certificate is healthy.
+
+One command runs every passive lookup and consolidates the report:
+
+```
+$ aegisforge domain investigate example.com
+domain investigation of example.com: 2 finding(s), 0 error(s)
+```
+
+![Domain investigation report with findings](images/04-domain-investigate.png)
+
+Behind that summary: A/AAAA/MX/NS/TXT/SOA/CNAME records (via a
+stdlib DNS wire client — `socket` alone can't query MX or TXT),
+reverse DNS for each address, nameserver resolution with lame
+delegation flags, MX preference ordering, DNSSEC *presence* (reported,
+never claimed as validated), TLS certificate inspection on 443,
+RDAP registration data with WHOIS fallback, ASN ownership via Team
+Cymru, and HTTP/HTTPS header + redirect chains. For a single record
+type, `aegisforge domain dns example.com --type MX` is the quick
+version.
+
+Unlike port scanning, all of this is passive directory lookups —
+nothing is sent to the target that its public services don't already
+answer for anyone, so there's no `--allow-remote` gate here.

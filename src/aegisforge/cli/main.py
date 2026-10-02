@@ -1,4 +1,4 @@
-"""AegisForge CLI: ``aegisforge network ...`` (v0.2).
+"""AegisForge CLI: ``aegisforge network ...`` / ``aegisforge domain ...`` (v0.3).
 
 Every command returns a shared result envelope, renders human-readable
 text by default (``--json`` / ``--csv`` for automation), uses structured
@@ -8,6 +8,12 @@ Diagnostics go to stderr; stdout carries only the requested output.
 v0.2 adds authorized TCP port/service scanning (``network scan``) with
 explicit remote-target consent (``--allow-remote``) and scan baselines
 with change detection (``network baseline``).
+
+v0.3 adds domain investigation (``domain dns``, ``domain investigate``):
+passive DNS/RDAP/WHOIS/HTTP lookups consolidated into one report.
+Unlike port scanning, these are directory lookups the target's public
+services already answer for any client, so no ``--allow-remote`` gate
+is required.
 """
 
 from __future__ import annotations
@@ -28,6 +34,8 @@ from aegisforge.core.findings import Finding
 from aegisforge.core.license import print_trial_notice, trial_status
 from aegisforge.core.logging import audit_log, configure_logging, get_logger
 from aegisforge.core.results import EXIT_ERROR, Result, exit_code_for
+from aegisforge.domain import dns_client as domain_dns_client
+from aegisforge.domain import investigate as investigate_mod
 from aegisforge.network import baselines as baselines_mod
 from aegisforge.network import dns as dns_mod
 from aegisforge.network import interfaces as interfaces_mod
@@ -477,6 +485,122 @@ def cmd_baseline(args: argparse.Namespace, cfg: AppConfig) -> Result:
 
 
 # ---------------------------------------------------------------------------
+# v0.3: domain investigation commands
+# ---------------------------------------------------------------------------
+
+
+def _record_detail(record: dict[str, Any]) -> str:
+    """One-line human summary of a DNS record's data."""
+    data = record.get("data", {})
+    rtype = record.get("rtype", "")
+    if rtype == "A" or rtype == "AAAA":
+        return str(data.get("address", ""))
+    if rtype == "MX":
+        return f"{data.get('preference')} {data.get('exchange')}"
+    if rtype == "NS":
+        return str(data.get("nameserver", ""))
+    if rtype == "CNAME":
+        return str(data.get("target", ""))
+    if rtype == "TXT":
+        text = str(data.get("text", ""))
+        return text[:80] + ("…" if len(text) > 80 else "")
+    if rtype == "SOA":
+        return f"mname={data.get('mname')} serial={data.get('serial')}"
+    if rtype == "DNSKEY":
+        return (
+            f"flags={data.get('flags')} alg={data.get('algorithm')} "
+            f"key_tag={data.get('key_tag')}"
+        )
+    if rtype == "DS":
+        digest = str(data.get("digest", ""))[:24]
+        return f"key_tag={data.get('key_tag')} digest={digest}…"
+    return json.dumps(data, sort_keys=True)[:80]
+
+
+def cmd_domain_dns(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="domain dns", target=args.name)
+    qtype = args.type.upper()
+    resolver = args.resolver or cfg.get("domain_resolver") or None
+    timeout = args.timeout if args.timeout is not None else cfg["domain_dns_timeout"]
+    try:
+        response = domain_dns_client.query(
+            args.name, qtype, resolver=resolver, timeout=timeout
+        )
+    except (domain_dns_client.DNSError, ValidationError) as exc:
+        result.fail(str(exc))
+        return result
+    records = [answer.to_dict() for answer in response.answers]
+    for record in records:
+        record["detail"] = _record_detail(record)
+    result.data = {
+        "name": args.name,
+        "qtype": qtype,
+        "resolver": resolver or "(system)",
+        "rcode": response.rcode_name,
+        "records": records,
+        "warnings": response.warnings,
+    }
+    result.summary = (
+        f"{args.name}/{qtype}: {len(records)} record(s) ({response.rcode_name})"
+    )
+    result.add_event(
+        Event(
+            event_type="domain.dns.queried",
+            source="aegisforge",
+            host=args.name,
+            evidence={
+                "qtype": qtype,
+                "rcode": response.rcode_name,
+                "answer_count": len(records),
+            },
+        )
+    )
+    return result
+
+
+def cmd_domain_investigate(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="domain investigate", target=args.domain)
+    resolver = args.resolver or cfg.get("domain_resolver") or None
+    timeout = args.timeout if args.timeout is not None else cfg["domain_dns_timeout"]
+    try:
+        options = investigate_mod.DomainOptions(
+            resolver=resolver,
+            timeout=timeout,
+            rdap=not args.no_rdap,
+            whois=not args.no_whois,
+            web=not args.no_web,
+            tls=not args.no_tls,
+        )
+        report = investigate_mod.investigate_domain(args.domain, options)
+    except ValidationError as exc:
+        result.fail(str(exc))
+        return result
+    result.data = report.to_dict()
+    findings = investigate_mod.analyze_findings(report)
+    for finding in findings:
+        result.add_finding(finding)
+    error_count = len(report.errors)
+    result.summary = (
+        f"domain investigation of {report.domain}: "
+        f"{len(findings)} finding(s), {error_count} error(s)"
+    )
+    result.add_event(
+        Event(
+            event_type="domain.investigation.completed",
+            source="aegisforge",
+            host=report.domain,
+            evidence={
+                "record_types": sorted(report.dns.get("records", {}).keys()),
+                "nameservers": len(report.nameservers.get("nameservers", [])),
+                "findings": len(findings),
+                "errors": report.errors,
+            },
+        )
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
 
@@ -598,6 +722,9 @@ def _csv_rows(result: Result) -> tuple[list[str], list[list[Any]]]:
     elif "addresses" in data:  # dns
         rows = data["addresses"]
         headers = ["ip", "family"]
+    elif "records" in data:  # domain dns
+        rows = data["records"]
+        headers = ["name", "rtype", "ttl", "detail"]
     else:
         rows = [data]
         headers = sorted(data.keys())
@@ -689,8 +816,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegisforge",
         description="AegisForge — modular defensive-security and DFIR platform "
-        "(v0.2: core + network discovery + port/service analysis). "
-        "Commercial software: 1-week free trial, see LICENSE.",
+        "(v0.3: core + network discovery + port/service analysis + domain "
+        "investigation). Commercial software: 1-week free trial, see LICENSE.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
@@ -831,6 +958,55 @@ def build_parser() -> argparse.ArgumentParser:
     )
     b_delete.add_argument("name", help="baseline name")
     b_delete.set_defaults(func=cmd_baseline)
+
+    # domain group (v0.3)
+    dom_p = sub.add_parser("domain", help="domain investigation")
+    dom_sub = dom_p.add_subparsers(dest="command", required=True)
+
+    p_ddns = dom_sub.add_parser(
+        "dns",
+        help="query DNS records (A/AAAA/MX/NS/TXT/SOA/CNAME/DNSKEY/DS)",
+        parents=parents,
+    )
+    p_ddns.add_argument("name", help="domain name to query")
+    p_ddns.add_argument(
+        "--type",
+        default="A",
+        help="record type: A, AAAA, MX, NS, TXT, SOA, CNAME, DNSKEY, DS",
+    )
+    p_ddns.add_argument(
+        "--resolver",
+        default=None,
+        help="DNS resolver IP (default: system resolvers)",
+    )
+    _add_timeout_flags(p_ddns)
+    p_ddns.set_defaults(func=cmd_domain_dns)
+
+    p_inv = dom_sub.add_parser(
+        "investigate",
+        help="consolidated domain investigation report",
+        parents=parents,
+    )
+    p_inv.add_argument("domain", help="domain name to investigate")
+    p_inv.add_argument(
+        "--resolver",
+        default=None,
+        help="DNS resolver IP (default: system resolvers)",
+    )
+    p_inv.add_argument(
+        "--no-rdap", action="store_true", help="skip RDAP registration lookup"
+    )
+    p_inv.add_argument(
+        "--no-whois", action="store_true", help="skip WHOIS fallback lookup"
+    )
+    p_inv.add_argument(
+        "--no-web", action="store_true", help="skip HTTP/HTTPS header collection"
+    )
+    p_inv.add_argument(
+        "--no-tls", action="store_true", help="skip TLS certificate inspection"
+    )
+    _add_timeout_flags(p_inv)
+    p_inv.set_defaults(func=cmd_domain_investigate)
 
     return parser
 

@@ -5,6 +5,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-02
+
+### Added
+
+- Domain investigation module (`domain/`, v0.3): `aegisforge domain
+  investigate DOMAIN` runs a consolidated passive report — DNS record
+  collection, reverse DNS, nameserver/MX analysis, DNSSEC presence, TLS
+  certificate inspection, RDAP (with WHOIS fallback), ASN ownership and
+  HTTP/HTTPS header/redirect collection — with per-section findings that
+  keep the observed-vs-inferred discipline.
+- Minimal DNS wire-protocol client (`domain/dns_client.py`, stdlib
+  only): `struct`-built queries and hand-parsed answers (with
+  compression-pointer handling) for A, AAAA, MX, NS, TXT, SOA, CNAME,
+  DNSKEY and DS over UDP with automatic TCP retry on truncation.
+  `socket.getaddrinfo` only exposes A/AAAA/PTR, so the raw client is the
+  point. Failed queries become warnings, never crashes.
+- `aegisforge domain dns NAME [--type MX] [--resolver IP]`: single
+  record-type queries through the wire client, with `--json`/`--csv`.
+- Nameserver analysis (`domain/nameservers.py`): lists NS records,
+  resolves each to A/AAAA, flags nameservers with no addresses as
+  possible lame delegations.
+- MX analysis (`domain/mx.py`): exchangers ordered by preference with
+  address resolution; null MX (RFC 7505) noted explicitly.
+- DNSSEC presence reporting (`domain/dnssec.py`): DNSKEY/DS publication
+  reported as present/partial/absent. Chain validation is deliberately
+  out of scope — the report says what is published, never claims
+  validation.
+- RDAP (`domain/rdap.py`): IANA bootstrap discovery + domain lookup via
+  stdlib `urllib` (registrar, status, lifecycle events, nameservers);
+  bounded reads, graceful degradation when offline.
+- WHOIS fallback (`domain/whois.py`): TCP port 43 with one referral
+  level, best-effort field extraction; raw text always kept.
+- ASN/IP ownership (`domain/asn.py`): Team Cymru DNS TXT lookups
+  (`origin.asn.cymru.com`), reusing the wire client — no API key, no
+  extra protocol.
+- HTTP/HTTPS collection (`domain/web.py`): `http.client` header fetch
+  with manual redirect following (max 5), Server header, final URL;
+  bodies never read.
+- Safety distinction documented in README: domain investigation is
+  passive directory lookups (no `--allow-remote` gate), unlike v0.2's
+  active port scanning.
+- New config knobs: `domain_dns_timeout`, `domain_resolver`,
+  `domain_http_timeout`, `rdap_timeout`, `whois_timeout`.
+- Domain module registered in `core/plugins.py` as v0.3.0 with
+  `domain dns` and `domain investigate` commands.
+
 ## [0.2.0] - 2026-10-02
 
 ### Added

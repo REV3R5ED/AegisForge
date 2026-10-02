@@ -16,9 +16,10 @@ In v0.2 there is **no lockout** — the licensing seam is in place
 (`aegisforge/core/license.py`) and commercial enforcement activates in a
 later release.
 
-## What v0.2 does
+## What v0.3 does
 
-Core + Network Discovery + **authorized port/service analysis**:
+Core + Network Discovery + authorized port/service analysis + **domain
+investigation**:
 
 | Command | What it does |
 |---|---|
@@ -34,7 +35,73 @@ Core + Network Discovery + **authorized port/service analysis**:
 | `aegisforge network baseline list` | List stored baselines |
 | `aegisforge network baseline show NAME` | Show a stored baseline |
 | `aegisforge network baseline delete NAME` | Delete a stored baseline |
+| `aegisforge domain dns NAME [--type MX]` | Raw DNS records (A/AAAA/MX/NS/TXT/SOA/CNAME/DNSKEY/DS) via a stdlib wire-protocol client |
+| `aegisforge domain investigate DOMAIN` | Consolidated report: DNS records, reverse DNS, NS/MX analysis, DNSSEC presence, TLS cert, RDAP (+WHOIS fallback), ASN ownership, HTTP/HTTPS headers & redirects |
 | `aegisforge config show` | Show effective configuration |
+
+### Investigation safety: passive lookups, no consent gate
+
+Domain investigation is **passive**: DNS, RDAP, WHOIS and HTTP header
+lookups only ask public directory services for information they already
+publish to any client. Unlike port scanning (v0.2), which sends probes
+to the target itself, nothing here requires `--allow-remote`:
+
+- `network scan` → **active** → public targets need `--allow-remote`.
+- `domain investigate` → **passive** → no gate; every step is a lookup
+  against DNS resolvers, the IANA RDAP bootstrap, WHOIS port 43, or the
+  domain's public web server headers.
+
+```console
+$ aegisforge domain dns example.com --type MX
+example.com/MX: 1 record(s) (NOERROR)
+
+name: example.com
+qtype: MX
+resolver: (system)
+rcode: NOERROR
+records: (1 items)
+  - name=example.com, rtype=MX, ttl=300, data={'preference': 0, 'exchange': '.'}, detail=0 .
+warnings: (0 items)
+
+$ aegisforge domain investigate example.com
+domain investigation of example.com: 2 finding(s), 0 error(s)
+
+domain: example.com
+dns:
+  records:
+    A: (1 items)
+      - name=example.com, rtype=A, ttl=300, data={'address': '93.184.216.34'}
+    MX: (1 items)
+      - name=example.com, rtype=MX, ttl=300, data={'preference': 0, 'exchange': '.'}
+    ...
+reverse_dns: (1 items)
+  - query=93.184.216.34, reverse_name=93-184-216-34.example.net
+nameservers:
+  nameservers: (1 items)
+    - hostname=a.iana-servers.net, ipv4=['199.43.135.53'], issues=[]
+tls:
+  not_after: 2027-06-01T00:00:00Z
+  days_until_expiry: 242
+  hostname_verified: True
+rdap:
+  registrar: Example Registrar
+  status: (1 items)
+    - active
+asn: (1 items)
+  - ip=93.184.216.34, asn=15169, prefix=93.184.216.0/24, country=US, registry=arin
+...
+
+Findings:
+  [low] mail exchanger problem: . (confidence 85)
+    null MX (RFC 7505): domain explicitly accepts no mail
+  [info] example.com publishes no DNSSEC signing evidence (confidence 90)
+    no DNSKEY or DS records were published for the zone; DNS answers for
+    this domain are not cryptographically signed (observation only —
+    absence of evidence, and AegisForge does not validate chains)
+```
+
+Findings keep the observed-vs-inferred discipline: what was seen goes
+in the evidence, what it might mean goes in the reason.
 
 ### Scan safety: authorized targets only
 

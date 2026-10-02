@@ -37,6 +37,11 @@ DEFAULTS: dict[str, Any] = {
     "scan_max_parallel": 50,
     "scan_banner_timeout": 2.0,
     "scan_max_ports": 1024,
+    "domain_dns_timeout": 5.0,
+    "domain_resolver": "",
+    "domain_http_timeout": 10.0,
+    "rdap_timeout": 10.0,
+    "whois_timeout": 10.0,
 }
 
 _PROFILE_DEFAULT = "default"
