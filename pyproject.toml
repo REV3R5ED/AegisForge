@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegisforge"
+version = "0.1.0"
+description = "AegisForge — modular defensive-security and DFIR platform (v0.1: core + network discovery)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Proprietary — 1-week free trial, commercial license required thereafter. See LICENSE."}
+authors = [{name = "Pouya Shini Karim"}]
+keywords = ["cybersecurity", "dfir", "forensics", "networking", "cli", "blue-team", "defensive-security"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Information Technology",
+  "License :: Other/Proprietary License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+  "Topic :: System :: Networking",
+]
+
+[project.urls]
+Repository = "https://github.com/REV3R5ED/AegisForge"
+Issues = "https://github.com/REV3R5ED/AegisForge/issues"
+Changelog = "https://github.com/REV3R5ED/AegisForge/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov>=6", "ruff>=0.8", "mypy>=1.13"]
+
+[project.scripts]
+aegisforge = "aegisforge.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "--cov=aegisforge --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["aegisforge"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise AssertionError",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.format]
+# line-length is inherited from [tool.ruff]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
