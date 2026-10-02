@@ -5,6 +5,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-02
+
+### Added
+
+- Authorized TCP port/service analysis (`network/scan*.py`):
+  `aegisforge network scan TARGET` with `--ports 22,80,443` and/or
+  `--port-range 1-1024`, bounded ThreadPoolExecutor (default 50, hard
+  max 100), per-connection timeouts with configurable retries,
+  open/closed/filtered states with per-port RTT.
+- Active-scan safety: loopback/private/link-local targets scan by
+  default; globally routable targets (every resolved address checked)
+  require explicit `--allow-remote`, otherwise refused with a clear
+  error (exit 2). All invocations audit-logged.
+- Service identification and banner grabbing (`network/services.py`):
+  passive banners for SSH/SMTP/FTP-style services, minimal HEAD
+  request for HTTP-ish ports, size-capped reads, sanitized one-line
+  display, port-map fallback.
+- TLS certificate inspection (`network/tls.py`): subject/issuer,
+  validity window, days-until-expiry, SANs, protocol/cipher, and
+  wildcard-aware hostname verification. Non-verifying capture context
+  by design — the scanner records what the peer presents.
+  Findings raised for expired (high) and soon-expiring (medium, ≤30d)
+  certificates.
+- HTTP/HTTPS metadata (`network/http.py`): status line, server header,
+  redirect targets, content type — parsed from the already-captured
+  response head, no extra connections.
+- Scan baselines with change detection (`network/baselines.py`):
+  `network baseline save/diff/list/show/delete`, JSON snapshots under
+  `~/.aegisforge/baselines/`, diffs report NEW / CLOSED / CHANGED
+  ports; new/closed ports raise findings on diff.
+- New config knobs: `scan_timeout`, `scan_retries`,
+  `scan_max_parallel`, `scan_banner_timeout`, `scan_max_ports`.
+- Network module re-registered in `core/plugins.py` as v0.2.0 with
+  `network scan` and `network baseline` commands.
+
+### Changed
+
+- Version bumped to 0.2.0 across package, CLI, and plugin registry.
+
 ## [0.1.0] - 2026-10-02
 
 ### Added

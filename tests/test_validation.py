@@ -72,3 +72,65 @@ def test_validate_timeout():
         validate_timeout(0.01)
     with pytest.raises(ValidationError):
         validate_timeout(500)
+
+
+def test_is_public_ip():
+    from aegisforge.network.validation import is_public_ip
+
+    assert is_public_ip("8.8.8.8") is True
+    assert is_public_ip("1.1.1.1") is True
+    assert is_public_ip("2001:4860:4860::8888") is True
+    for local in [
+        "192.168.1.1",
+        "10.0.0.5",
+        "172.16.0.1",
+        "127.0.0.1",
+        "169.254.10.20",
+        "224.0.0.1",
+        "0.0.0.0",
+        "::1",
+        "fe80::1",
+        "fc00::1",
+        "192.0.2.1",
+    ]:
+        assert is_public_ip(local) is False, local
+    with pytest.raises(ValidationError):
+        is_public_ip("not-an-ip")
+
+
+def test_parse_port_spec():
+    from aegisforge.network.validation import parse_port_spec
+
+    assert parse_port_spec("22,80,443", None, max_ports=1024, default=[80]) == [
+        22,
+        80,
+        443,
+    ]
+    assert parse_port_spec(None, "1-3", max_ports=1024, default=[80]) == [1, 2, 3]
+    assert parse_port_spec("22", "80-81", max_ports=1024, default=[]) == [22, 80, 81]
+    assert parse_port_spec("22,22", None, max_ports=1024, default=[]) == [22]
+    assert parse_port_spec(None, None, max_ports=1024, default=[80]) == [80]
+    assert parse_port_spec(None, "8080-8080", max_ports=1024, default=[]) == [8080]
+    for bad_ports, bad_range in [
+        ("22,abc", None),
+        ("0", None),
+        ("70000", None),
+        ("22,,80", None),
+        (None, "100-1"),
+        (None, "1-"),
+        (None, "abc"),
+        (None, "1-70000"),
+    ]:
+        with pytest.raises(ValidationError):
+            parse_port_spec(bad_ports, bad_range, max_ports=1024, default=[])
+    with pytest.raises(ValidationError, match="too large"):
+        parse_port_spec(None, "1-2000", max_ports=1024, default=[])
+
+
+def test_validate_baseline_name():
+    from aegisforge.network.validation import validate_baseline_name
+
+    assert validate_baseline_name("web-01_prod") == "web-01_prod"
+    for bad in ["", "../evil", "a/b", "has space", "x" * 65, "-"]:
+        with pytest.raises(ValidationError):
+            validate_baseline_name(bad)

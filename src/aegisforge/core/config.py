@@ -32,6 +32,11 @@ DEFAULTS: dict[str, Any] = {
     "trace_timeout": 2.0,
     "subnet_max_hosts": 1024,
     "scan_max_targets": 256,
+    "scan_timeout": 1.0,
+    "scan_retries": 1,
+    "scan_max_parallel": 50,
+    "scan_banner_timeout": 2.0,
+    "scan_max_ports": 1024,
 }
 
 _PROFILE_DEFAULT = "default"

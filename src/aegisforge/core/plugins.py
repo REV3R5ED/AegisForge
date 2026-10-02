@@ -1,10 +1,11 @@
 """Module/plugin registration for future AegisForge phases.
 
-v0.1 ships the network module registered here. Later phases
-(domain, forensic, logs, pcap, intel, correlation, cases, reporting)
-register themselves the same way — either by calling
-:func:`register` at import time or via ``importlib.metadata`` entry
-points under the ``aegisforge.modules`` group.
+The network module (v0.2: discovery + port/service analysis) is
+registered here. Later phases (domain, forensic, logs, pcap, intel,
+correlation, cases, reporting) register themselves the same way —
+either by calling :func:`register` at import time or via
+``importlib.metadata`` entry points under the ``aegisforge.modules``
+group.
 """
 
 from __future__ import annotations

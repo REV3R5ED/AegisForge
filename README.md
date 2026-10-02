@@ -12,13 +12,13 @@ operators who need trustworthy, auditable network and host discovery.
 > Copyright (c) 2026 Pouya Shini Karim.
 
 The CLI prints a friendly `Trial: N days remaining` notice on startup.
-In v0.1 there is **no lockout** — the licensing seam is in place
+In v0.2 there is **no lockout** — the licensing seam is in place
 (`aegisforge/core/license.py`) and commercial enforcement activates in a
 later release.
 
-## What v0.1 does
+## What v0.2 does
 
-Core + Network Discovery:
+Core + Network Discovery + **authorized port/service analysis**:
 
 | Command | What it does |
 |---|---|
@@ -28,7 +28,40 @@ Core + Network Discovery:
 | `aegisforge network trace TARGET` | Bounded traceroute via OS utility |
 | `aegisforge network interfaces` | Local interfaces, optionally routes and ARP/neighbour table |
 | `aegisforge network inventory` | Local asset inventory record |
+| `aegisforge network scan TARGET [--ports ...] [--port-range ...]` | TCP connect scan: open/closed/filtered, banner grabbing, service ID, TLS cert inspection, HTTP metadata |
+| `aegisforge network baseline save NAME TARGET` | Scan a target and store the result as a named baseline |
+| `aegisforge network baseline diff NAME TARGET` | Rescan and report NEW / CLOSED / CHANGED ports vs the baseline |
+| `aegisforge network baseline list` | List stored baselines |
+| `aegisforge network baseline show NAME` | Show a stored baseline |
+| `aegisforge network baseline delete NAME` | Delete a stored baseline |
 | `aegisforge config show` | Show effective configuration |
+
+### Scan safety: authorized targets only
+
+Port scanning is an **active** technique, so v0.2 enforces target
+scoping:
+
+- **Local targets scan freely**: loopback, RFC 1918 / ULA private
+  addresses, link-local, and other non-routable addresses.
+- **Public targets require explicit consent**: scanning anything
+  globally routable refuses with an error unless you pass
+  `--allow-remote` — a deliberate, audit-logged acknowledgement that
+  you are authorized to scan the target. Hostnames are resolved first
+  and *every* resolved address is checked.
+
+```console
+$ aegisforge network scan 93.184.216.34 --ports 80,443
+aegisforge: error: refusing to scan public target '93.184.216.34'
+(resolves to 93.184.216.34) without --allow-remote: confirm you are
+authorized to scan this target, then re-run with --allow-remote
+$ echo $?
+2
+```
+
+Concurrency is capped (default 50 workers, hard max 100), every
+connection carries a timeout, retries are bounded, and banner reads
+are size-capped. No `shell=True` anywhere; all targets and port
+specs are validated before any packet is sent.
 
 Every command emits human-readable output by default, `--json` and
 `--csv` for automation, and structured exit codes:
@@ -71,6 +104,41 @@ calculator:
   first_usable: 192.168.1.1
   last_usable: 192.168.1.254
   is_private: True
+```
+
+```console
+$ aegisforge network scan 127.0.0.1 --ports 22,80,443
+127.0.0.1 (127.0.0.1): 1/3 ports open in 4ms
+
+target: 127.0.0.1
+resolved_ip: 127.0.0.1
+ports_scanned: 3
+ports_open: 1
+duration_ms: 4.12
+allow_remote: False
+
+PORT   STATE     SERVICE     BANNER
+22     open      ssh         SSH-2.0-OpenSSH_9.6
+80     closed
+443    closed
+```
+
+```console
+$ aegisforge network baseline save office-lan 192.168.1.10 --port-range 1-1024
+baseline 'office-lan' saved for 192.168.1.10: 3/1024 ports open
+$ aegisforge network baseline diff office-lan 192.168.1.10 --port-range 1-1024
+baseline 'office-lan': 1 new port(s) since baseline
+
+name: office-lan
+target: 192.168.1.10
+baseline_created: 2026-10-02T23:00:00Z
+
+NEW:
+  8080: port 8080 is now open (http)
+
+Findings:
+  [medium] new open port since baseline: 8080 (confidence 90)
+    port 8080 is now open (http)
 ```
 
 ```console
@@ -129,7 +197,8 @@ overrides:
 ```
 aegisforge/
   core/        config, events, findings, evidence, plugins, logging, results, license
-  network/     subnet, ping, dns, trace, interfaces, inventory
+  network/     subnet, ping, dns, trace, interfaces, inventory,
+               scanner, services, tls, http, baselines
   cli/         argparse surface, human/JSON/CSV rendering
 ```
 
@@ -146,7 +215,7 @@ correlation engine, case management, reporting.
 
 ```bash
 pip install -e ".[dev]"
-pytest                    # 97 tests, coverage gate 80%
+pytest                    # 178 tests, coverage gate 80%
 ruff check . && ruff format --check .
 mypy src
 ```

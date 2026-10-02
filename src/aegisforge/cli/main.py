@@ -1,9 +1,13 @@
-"""AegisForge CLI: ``aegisforge network ...`` (v0.1).
+"""AegisForge CLI: ``aegisforge network ...`` (v0.2).
 
 Every command returns a shared result envelope, renders human-readable
 text by default (``--json`` / ``--csv`` for automation), uses structured
 exit codes (0 ok / 1 findings / 2 error), and writes an audit record.
 Diagnostics go to stderr; stdout carries only the requested output.
+
+v0.2 adds authorized TCP port/service scanning (``network scan``) with
+explicit remote-target consent (``--allow-remote``) and scan baselines
+with change detection (``network baseline``).
 """
 
 from __future__ import annotations
@@ -24,12 +28,15 @@ from aegisforge.core.findings import Finding
 from aegisforge.core.license import print_trial_notice, trial_status
 from aegisforge.core.logging import audit_log, configure_logging, get_logger
 from aegisforge.core.results import EXIT_ERROR, Result, exit_code_for
+from aegisforge.network import baselines as baselines_mod
 from aegisforge.network import dns as dns_mod
 from aegisforge.network import interfaces as interfaces_mod
 from aegisforge.network import inventory as inventory_mod
 from aegisforge.network import ping as ping_mod
+from aegisforge.network import scanner as scanner_mod
 from aegisforge.network import subnet as subnet_mod
 from aegisforge.network import trace as trace_mod
+from aegisforge.network import validation as validation_mod
 from aegisforge.network.validation import ValidationError
 
 log = get_logger()
@@ -238,6 +245,237 @@ def cmd_config_show(args: argparse.Namespace, cfg: AppConfig) -> Result:
     return result
 
 
+def _scan_options_from_args(
+    args: argparse.Namespace, cfg: AppConfig
+) -> scanner_mod.ScanOptions:
+    timeout = args.timeout if args.timeout is not None else cfg["scan_timeout"]
+    retries = args.retries if args.retries is not None else cfg["scan_retries"]
+    max_parallel = (
+        args.max_parallel if args.max_parallel is not None else cfg["scan_max_parallel"]
+    )
+    return scanner_mod.ScanOptions(
+        timeout=timeout,
+        retries=retries,
+        max_parallel=max_parallel,
+        banner=not args.no_banner,
+        banner_timeout=cfg["scan_banner_timeout"],
+        tls_probe=not args.no_service_probes,
+        http_probe=not args.no_service_probes,
+    )
+
+
+def _tls_findings(scan: scanner_mod.ScanResult, result: Result) -> None:
+    for port_result in scan.open_ports:
+        tls = port_result.tls or {}
+        days = tls.get("days_until_expiry")
+        if not isinstance(days, int):
+            continue
+        if days < 0:
+            result.add_finding(
+                Finding(
+                    title=f"TLS certificate expired on port {port_result.port}",
+                    severity="high",
+                    confidence=95,
+                    reason=f"certificate expired {-days} day(s) ago",
+                    evidence=[
+                        f"not_after={tls.get('not_after')}",
+                        f"subject={tls.get('subject', {}).get('CN', '?')}",
+                    ],
+                )
+            )
+        elif days <= 30:
+            result.add_finding(
+                Finding(
+                    title=f"TLS certificate expiring on port {port_result.port}",
+                    severity="medium",
+                    confidence=90,
+                    reason=f"certificate expires in {days} day(s)",
+                    evidence=[f"not_after={tls.get('not_after')}"],
+                )
+            )
+
+
+def cmd_scan(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="network scan", target=args.target)
+    try:
+        ports = validation_mod.parse_port_spec(
+            args.ports,
+            args.port_range,
+            max_ports=cfg["scan_max_ports"],
+            default=scanner_mod.DEFAULT_PORTS,
+        )
+        options = _scan_options_from_args(args, cfg)
+        scan = scanner_mod.scan_host(
+            args.target, ports, options, allow_remote=args.allow_remote
+        )
+    except ValidationError as exc:
+        result.fail(str(exc))
+        return result
+    result.data = {
+        "target": scan.target,
+        "resolved_ip": scan.resolved_ip,
+        "ports_scanned": len(scan.ports),
+        "ports_open": len(scan.open_ports),
+        "duration_ms": scan.duration_ms,
+        "allow_remote": scan.allow_remote,
+        "ports": [p.to_dict() for p in scan.ports],
+    }
+    result.summary = (
+        f"{scan.target} ({scan.resolved_ip}): "
+        f"{len(scan.open_ports)}/{len(scan.ports)} ports open "
+        f"in {scan.duration_ms:.0f}ms"
+    )
+    result.add_event(
+        Event(
+            event_type="network.scan.completed",
+            source="aegisforge",
+            host=scan.target,
+            evidence={
+                "resolved_ip": scan.resolved_ip,
+                "ports_scanned": len(scan.ports),
+                "ports_open": len(scan.open_ports),
+                "open_ports": [p.port for p in scan.open_ports],
+                "allow_remote": scan.allow_remote,
+            },
+        )
+    )
+    _tls_findings(scan, result)
+    return result
+
+
+def cmd_baseline(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    action = args.baseline_command
+    result = Result(command=f"network baseline {action}")
+    if action == "list":
+        entries = baselines_mod.list_baselines()
+        result.data = {"baselines": entries}
+        result.summary = f"{len(entries)} baseline(s) stored"
+        return result
+    if action == "show":
+        try:
+            payload = baselines_mod.load_baseline(args.name)
+        except ValidationError as exc:
+            result.fail(str(exc))
+            return result
+        result.data = payload
+        result.summary = (
+            f"baseline {payload.get('name')!r}: target {payload.get('target')}, "
+            f"{len(payload.get('ports', []))} ports, "
+            f"created {payload.get('created')}"
+        )
+        return result
+    if action == "delete":
+        try:
+            removed = baselines_mod.delete_baseline(args.name)
+        except ValidationError as exc:
+            result.fail(str(exc))
+            return result
+        result.data = {"name": args.name, "deleted": removed}
+        result.summary = (
+            f"baseline {args.name!r} deleted"
+            if removed
+            else f"no baseline named {args.name!r}"
+        )
+        return result
+    # save / diff: run a scan first.
+    try:
+        name = validation_mod.validate_baseline_name(args.name)
+        ports = validation_mod.parse_port_spec(
+            args.ports,
+            args.port_range,
+            max_ports=cfg["scan_max_ports"],
+            default=scanner_mod.DEFAULT_PORTS,
+        )
+        options = _scan_options_from_args(args, cfg)
+        scan = scanner_mod.scan_host(
+            args.target, ports, options, allow_remote=args.allow_remote
+        )
+    except ValidationError as exc:
+        result.fail(str(exc))
+        return result
+    result.target = args.target
+    if action == "save":
+        path = baselines_mod.save_baseline(name, scan)
+        result.data = {
+            "name": name,
+            "path": str(path),
+            "target": scan.target,
+            "ports_scanned": len(scan.ports),
+            "ports_open": len(scan.open_ports),
+        }
+        result.summary = (
+            f"baseline {name!r} saved for {scan.target}: "
+            f"{len(scan.open_ports)}/{len(scan.ports)} ports open"
+        )
+        result.add_event(
+            Event(
+                event_type="network.baseline.saved",
+                source="aegisforge",
+                host=scan.target,
+                evidence={"name": name, "ports_open": len(scan.open_ports)},
+            )
+        )
+        return result
+    # diff
+    try:
+        baseline = baselines_mod.load_baseline(name)
+    except ValidationError as exc:
+        result.fail(str(exc))
+        return result
+    diff = baselines_mod.diff_baseline(baseline, scan)
+    result.data = {
+        "name": name,
+        "target": scan.target,
+        "baseline_created": diff.baseline_created,
+        "changes": [e.to_dict() for e in diff.entries],
+    }
+    result.summary = f"baseline {name!r}: {diff.summary}"
+    result.add_event(
+        Event(
+            event_type="network.baseline.diffed",
+            source="aegisforge",
+            host=scan.target,
+            evidence={
+                "name": name,
+                "changes": [{"port": e.port, "change": e.change} for e in diff.entries],
+            },
+        )
+    )
+    for entry in diff.entries:
+        if entry.change == "new":
+            result.add_finding(
+                Finding(
+                    title=f"new open port since baseline: {entry.port}",
+                    severity="medium",
+                    confidence=90,
+                    reason=entry.detail,
+                    evidence=[f"baseline {name!r} taken {diff.baseline_created}"],
+                )
+            )
+        elif entry.change == "closed":
+            result.add_finding(
+                Finding(
+                    title=f"port closed since baseline: {entry.port}",
+                    severity="low",
+                    confidence=90,
+                    reason=entry.detail,
+                    evidence=[f"baseline {name!r} taken {diff.baseline_created}"],
+                )
+            )
+        else:
+            result.add_finding(
+                Finding(
+                    title=f"service changed on port {entry.port} since baseline",
+                    severity="low",
+                    confidence=80,
+                    reason=entry.detail,
+                    evidence=[f"baseline {name!r} taken {diff.baseline_created}"],
+                )
+            )
+    _tls_findings(scan, result)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
@@ -272,9 +510,37 @@ def render_human(result: Result) -> str:
         return "\n".join(lines) if lines else "error"
     data = dict(result.data)
     data.pop("events", None)
+    ports = data.pop("ports", None)
+    changes = data.pop("changes", None)
+    baselines = data.pop("baselines", None)
     if data:
         lines.append("")
         lines.extend(_kv_lines(data))
+    if isinstance(ports, list):
+        lines.append("")
+        lines.append(f"{'PORT':<7}{'STATE':<10}{'SERVICE':<12}BANNER")
+        for p in ports:
+            banner = (p.get("banner") or "")[:64]
+            lines.append(
+                f"{p.get('port'):<7}{p.get('state'):<10}"
+                f"{(p.get('service') or ''):<12}{banner}"
+            )
+    if isinstance(changes, list):
+        lines.append("")
+        for change in ("new", "closed", "changed"):
+            group = [c for c in changes if c.get("change") == change]
+            if group:
+                lines.append(f"{change.upper()}:")
+                for c in group:
+                    lines.append(f"  {c.get('port')}: {c.get('detail')}")
+    if isinstance(baselines, list):
+        lines.append("")
+        lines.append(f"{'NAME':<24}{'TARGET':<20}{'OPEN':<6}CREATED")
+        for b in baselines:
+            lines.append(
+                f"{str(b.get('name')):<24}{str(b.get('target')):<20}"
+                f"{str(b.get('ports_open')):<6}{b.get('created')}"
+            )
     if result.findings:
         lines.append("")
         lines.append("Findings:")
@@ -310,6 +576,25 @@ def _csv_rows(result: Result) -> tuple[list[str], list[list[Any]]]:
     elif "hosts" in data:  # subnet expand
         rows = [{"host": h} for h in data["hosts"]]
         headers = ["host"]
+    elif "ports" in data:  # scan
+        rows = [
+            {
+                "target": data.get("target", ""),
+                "port": p.get("port"),
+                "state": p.get("state"),
+                "service": p.get("service"),
+                "rtt_ms": p.get("rtt_ms"),
+                "banner": p.get("banner"),
+            }
+            for p in data["ports"]
+        ]
+        headers = ["target", "port", "state", "service", "rtt_ms", "banner"]
+    elif "changes" in data:  # baseline diff
+        rows = data["changes"]
+        headers = ["port", "change", "detail"]
+    elif "baselines" in data:  # baseline list
+        rows = data["baselines"]
+        headers = ["name", "target", "ports_scanned", "ports_open", "created"]
     elif "addresses" in data:  # dns
         rows = data["addresses"]
         headers = ["ip", "family"]
@@ -359,12 +644,53 @@ def _add_timeout_flags(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_scan_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--ports",
+        default=None,
+        help="comma-separated ports, e.g. 22,80,443",
+    )
+    parser.add_argument(
+        "--port-range",
+        default=None,
+        help="inclusive port range, e.g. 1-1024 (combinable with --ports)",
+    )
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=None,
+        help="connect retries on timeout (max 5)",
+    )
+    parser.add_argument(
+        "--max-parallel",
+        type=int,
+        default=None,
+        help="concurrent connections (max 100)",
+    )
+    parser.add_argument(
+        "--no-banner",
+        action="store_true",
+        help="skip banner grabbing on open ports",
+    )
+    parser.add_argument(
+        "--no-service-probes",
+        action="store_true",
+        help="skip TLS/HTTP/banner probing (port states only)",
+    )
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="permit scanning public targets; confirm you are authorized first",
+    )
+    _add_timeout_flags(parser)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegisforge",
         description="AegisForge — modular defensive-security and DFIR platform "
-        "(v0.1: core + network discovery). Commercial software: "
-        "1-week free trial, see LICENSE.",
+        "(v0.2: core + network discovery + port/service analysis). "
+        "Commercial software: 1-week free trial, see LICENSE.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
@@ -460,6 +786,51 @@ def build_parser() -> argparse.ArgumentParser:
         "inventory", help="local asset inventory", parents=parents
     )
     p_inv.set_defaults(func=cmd_inventory)
+
+    p_scan = net_sub.add_parser(
+        "scan",
+        help="authorized TCP port/service scan of one target",
+        parents=parents,
+    )
+    p_scan.add_argument("target", help="hostname or IP address to scan")
+    _add_scan_flags(p_scan)
+    p_scan.set_defaults(func=cmd_scan)
+
+    p_base = net_sub.add_parser(
+        "baseline",
+        help="scan baselines: save, diff, list",
+        parents=parents,
+    )
+    base_sub = p_base.add_subparsers(dest="baseline_command", required=True)
+
+    b_save = base_sub.add_parser(
+        "save", help="scan a target and store it as a baseline", parents=parents
+    )
+    b_save.add_argument("name", help="baseline name (letters, digits, - and _)")
+    b_save.add_argument("target", help="hostname or IP address to scan")
+    _add_scan_flags(b_save)
+    b_save.set_defaults(func=cmd_baseline)
+
+    b_diff = base_sub.add_parser(
+        "diff", help="rescan a target and diff against a baseline", parents=parents
+    )
+    b_diff.add_argument("name", help="baseline name to compare against")
+    b_diff.add_argument("target", help="hostname or IP address to rescan")
+    _add_scan_flags(b_diff)
+    b_diff.set_defaults(func=cmd_baseline)
+
+    b_list = base_sub.add_parser("list", help="list stored baselines", parents=parents)
+    b_list.set_defaults(func=cmd_baseline)
+
+    b_show = base_sub.add_parser("show", help="show a stored baseline", parents=parents)
+    b_show.add_argument("name", help="baseline name")
+    b_show.set_defaults(func=cmd_baseline)
+
+    b_delete = base_sub.add_parser(
+        "delete", help="delete a stored baseline", parents=parents
+    )
+    b_delete.add_argument("name", help="baseline name")
+    b_delete.set_defaults(func=cmd_baseline)
 
     return parser
 
