@@ -87,9 +87,39 @@ JSON follows a stable envelope (`tool`, `version`, `command`,
 `timestamp`, `status`, `summary`, `data`, `findings`, `events`) with
 exit codes `0` = ok, `1` = findings, `2` = error.
 
-## What's next
+## What's next — v0.2: authorized scanning and change detection
 
-v0.1 covers passive discovery. v0.2 adds **authorized** TCP port and
-service scanning with service banners, TLS inspection, and
-baseline/diff change detection — with an explicit `--allow-remote` gate
-before any public IP can be scanned.
+> **Scenario continues:** a week later, you want to know if anything
+> changed on that machine. Save a baseline, then rescan and diff.
+
+Scanning is an *active* step, so AegisForge makes you name your target
+explicitly — and refuses public IPs unless you pass `--allow-remote`
+to confirm you're authorized:
+
+```
+$ aegisforge network scan 127.0.0.1 --ports 22,80,443
+127.0.0.1 (127.0.0.1): 0/3 ports open
+
+PORT   STATE     SERVICE     BANNER
+22     closed
+80     closed
+443    closed
+```
+
+Save the known-good state, then let the diff catch drift:
+
+```
+$ aegisforge network baseline save webserver 127.0.0.1 --ports 18080
+baseline 'webserver' saved for 127.0.0.1: 0/1 ports open
+
+$ # ... later, something starts listening ...
+
+$ aegisforge network baseline diff webserver 127.0.0.1 --ports 18080
+```
+
+![Scan baseline diff catching a new open port](images/03-scan-and-baseline.png)
+
+The diff doesn't just print the change — it raises a proper finding
+with severity and confidence, ready for the case timeline. Scan
+results include service banners, TLS certificate details, and
+HTTP metadata where available.
