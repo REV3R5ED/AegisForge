@@ -106,6 +106,9 @@ $ aegisforge network dns 93.184.216.34 --json
 }
 ```
 
+See [docs/USAGE.md](docs/USAGE.md) for a scenario walkthrough with
+screenshots: documenting an undocumented network step by step.
+
 ## Configuration
 
 JSON config files (`~/.aegisforge/config.json`, overridable with
