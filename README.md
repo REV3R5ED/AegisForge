@@ -19,7 +19,8 @@ later release.
 ## What v0.5 does
 
 Core + Network Discovery + authorized port/service analysis + domain
-investigation + **log analysis**:
+investigation + **log analysis** + **digital forensics** (v0.4, shipped
+right after v0.5 per the master plan's numbering):
 
 | Command | What it does |
 |---|---|
@@ -39,6 +40,11 @@ investigation + **log analysis**:
 | `aegisforge domain investigate DOMAIN` | Consolidated report: DNS records, reverse DNS, NS/MX analysis, DNSSEC presence, TLS cert, RDAP (+WHOIS fallback), ASN ownership, HTTP/HTTPS headers & redirects |
 | `aegisforge logs detect FILE` | Auto-detect the log format (syslog, Apache/Nginx, JSON lines, Windows Event XML, key=value) with confidence scores |
 | `aegisforge logs analyze FILE [--format auto] [--since ...] [--until ...] [--level ...] [--contains ...] [--host ...] [--redact]` | Streaming analysis: timeline, severity/HTTP-status histograms, top talkers, error extraction with context, burst detection, observed-vs-inferred findings |
+| `aegisforge forensics inventory PATH [--include GLOB] [--exclude GLOB] [--algorithms sha256]` | Read-only recursive file inventory: magic-byte identification (extension fallback labeled), single-pass multi-algorithm hashing, sizes, UTC filesystem timestamps |
+| `aegisforge forensics manifest PATH --output MANIFEST.json [--note TEXT]` | Inventory a tree and write a sealed evidence manifest (SHA-256 over canonical JSON, digest recorded in the audit log) |
+| `aegisforge forensics verify --manifest MANIFEST.json [--root PATH]` | Re-hash the live tree; report changed / missing / new files as observed-vs-inferred findings |
+| `aegisforge forensics duplicates PATH` | Group files with identical SHA-256 content |
+| `aegisforge forensics timeline PATH` | Chronological filesystem timestamps (mtime/atime/ctime) — filesystem metadata, not content claims |
 | `aegisforge config show` | Show effective configuration |
 
 ### Investigation safety: passive lookups, no consent gate

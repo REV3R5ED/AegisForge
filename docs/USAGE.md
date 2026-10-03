@@ -188,3 +188,45 @@ source file stays untouched:
 ```console
 $ aegisforge logs analyze auth.log --redact --since 2026-10-02T16:00:00Z
 ```
+
+## What's next — v0.4: digital forensics
+
+> **Scenario continues:** the logs point at a compromised laptop. You
+> image its drive to `case-001/` — before anything else, AegisForge
+> inventories every file and seals the result in an evidence manifest.
+> Days later, you verify the copy still matches.
+
+```console
+$ aegisforge forensics inventory case-001
+case-001: 4 file(s), 38 byte(s), 0 warning(s)
+
+$ aegisforge forensics manifest case-001 --output case-001.json
+manifest written to case-001.json: 4 file(s), sha256 3295ccbf7339e39e…
+
+$ aegisforge forensics verify --manifest case-001.json
+case-001.json: 3 verified, 1 changed, 0 missing, 0 new
+```
+
+![Forensics inventory, sealed manifest, and verification catching a changed file](images/06-forensics-inventory.png)
+
+The inventory is **read-only** — files are opened for reading only,
+never modified, moved, or deleted. Each file is identified by magic
+bytes first (30+ signatures); when no signature matches, the extension
+is used as a clearly-labeled fallback, and a magic/extension
+disagreement (like `invoice.pdf` above carrying an MZ header) is
+flagged as an observed fact, not a verdict. Hashing is single-pass and
+streaming — SHA-256, MD5 and SHA-1 computed in one chunked read, so
+multi-gigabyte images never blow up memory.
+
+The manifest is sealed with a SHA-256 over its canonical encoding,
+stored inside the document and recorded in the audit log — a
+tamper-evidence seam, not a claim of legal admissibility. Verification
+re-hashes the live tree and reports changed / missing / new files,
+each as a finding with the observed-vs-inferred discipline: a hash
+mismatch is *observed*; calling it tampering is *inferred*.
+
+Rounding out the module: `forensics duplicates` groups byte-identical
+files by SHA-256, and `forensics timeline` lists mtime/atime/ctime
+chronologically — labeled as filesystem metadata, not content claims.
+Unreadable files and dangling symlinks become warnings, never
+crashes, and directory symlinks are never followed.

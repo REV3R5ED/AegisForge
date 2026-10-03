@@ -5,6 +5,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-03
+
+> **Numbering note:** this is the master plan's v0.4 (Digital Forensics).
+> It was built and merged after v0.5 (Log Analysis) shipped, so it
+> appears above v0.5.0 in this file. The package version stays 0.5.0;
+> the forensics module registers itself as v0.4.0 in the plugin
+> registry.
+
+### Added
+
+- Digital forensics module (`forensics/`, v0.4): read-only recursive
+  file inventory — the module opens files for reading only and never
+  modifies, moves, or deletes anything under the scanned root.
+- `aegisforge forensics inventory PATH` walks the tree (streaming,
+  memory-bounded) with `--include`/`--exclude` glob filters, identifies
+  each file by magic bytes (30+ signatures; extension fallback is
+  clearly labeled, `extension_mismatch` flags magic/extension
+  disagreements as an observed fact), and hashes with SHA-256 (default),
+  MD5 and SHA-1 computed in a single chunked pass.
+- `aegisforge forensics manifest PATH --output MANIFEST.json`
+  writes a sealed evidence manifest (file list with hashes, sizes and
+  UTC filesystem timestamps, tool version, run timestamps, operator
+  note); the manifest's SHA-256 over its canonical encoding is stored
+  inside the document and recorded in the audit log as a
+  tamper-evidence seam (not a claim of legal admissibility).
+- `aegisforge forensics verify --manifest MANIFEST.json` re-hashes the
+  live tree and reports changed / missing / new files, each as a
+  finding with the observed-vs-inferred discipline (a hash mismatch is
+  *observed*; calling it tampering is *inferred*).
+- `aegisforge forensics duplicates PATH` groups files by identical
+  SHA-256; `aegisforge forensics timeline PATH` lists mtime/atime/ctime
+  chronologically, labeled as filesystem metadata rather than content
+  claims.
+- Unreadable files, dangling symlinks and permission errors become
+  warnings, never crashes; directory symlinks are never followed.
+- Scenario guide (`docs/USAGE.md`) extended with a forensics step and
+  a real terminal screenshot.
+
 ## [0.5.0] - 2026-10-02
 
 ### Added

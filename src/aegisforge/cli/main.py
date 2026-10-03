@@ -1,5 +1,5 @@
 """AegisForge CLI: ``aegisforge network ...`` / ``aegisforge domain ...`` /
-``aegisforge logs ...`` (v0.4).
+``aegisforge logs ...`` / ``aegisforge forensics ...``.
 
 Every command returns a shared result envelope, renders human-readable
 text by default (``--json`` / ``--csv`` for automation), uses structured
@@ -16,11 +16,19 @@ Unlike port scanning, these are directory lookups the target's public
 services already answer for any client, so no ``--allow-remote`` gate
 is required.
 
-v0.4 adds log analysis (``logs detect``, ``logs analyze``): streaming
+v0.5 adds log analysis (``logs detect``, ``logs analyze``): streaming
 parsers for syslog, Apache/Nginx, JSON lines, Windows Event XML
 exports and key=value, with format auto-detection, timeline,
 histograms, top talkers, error extraction and burst detection.
 ``--redact`` masks IPs/emails in output only (source files untouched).
+
+v0.4 adds digital forensics (``forensics inventory``, ``forensics
+manifest``, ``forensics verify``, ``forensics duplicates``,
+``forensics timeline``): read-only recursive file inventory with
+magic-byte identification, single-pass multi-algorithm hashing,
+sealed evidence manifests, manifest verification
+(changed/missing/new), duplicate detection and filesystem timelines.
+Numbered v0.4 per the master plan; it shipped after v0.5.
 """
 
 from __future__ import annotations
@@ -29,6 +37,7 @@ import argparse
 import csv
 import io
 import json
+import os
 import sys
 from collections.abc import Sequence
 from typing import Any
@@ -40,9 +49,14 @@ from aegisforge.core.events import Event
 from aegisforge.core.findings import Finding
 from aegisforge.core.license import print_trial_notice, trial_status
 from aegisforge.core.logging import audit_log, configure_logging, get_logger
-from aegisforge.core.results import EXIT_ERROR, Result, exit_code_for
+from aegisforge.core.results import EXIT_ERROR, EXIT_OK, Result, exit_code_for
 from aegisforge.domain import dns_client as domain_dns_client
 from aegisforge.domain import investigate as investigate_mod
+from aegisforge.forensics import duplicates as forensics_duplicates_mod
+from aegisforge.forensics import hashing as forensics_hashing_mod
+from aegisforge.forensics import inventory as forensics_inventory_mod
+from aegisforge.forensics import manifest as forensics_manifest_mod
+from aegisforge.forensics import timeline as forensics_timeline_mod
 from aegisforge.logs import analyze as logs_analyze_mod
 from aegisforge.logs import detect as logs_detect_mod
 from aegisforge.logs import redact as logs_redact_mod
@@ -711,6 +725,239 @@ def cmd_logs_analyze(args: argparse.Namespace, cfg: AppConfig) -> Result:
     return result
 
 
+def _forensics_algorithms(args: argparse.Namespace) -> tuple[str, ...]:
+    chosen = tuple(args.algorithms) if args.algorithms else ("sha256",)
+    unknown = [a for a in chosen if a not in forensics_hashing_mod.SUPPORTED_ALGORITHMS]
+    if unknown:
+        raise ValidationError(f"unsupported hash algorithm(s): {', '.join(unknown)}")
+    # Preserve order, drop duplicates.
+    return tuple(dict.fromkeys(chosen))
+
+
+def _check_root(path: str) -> str | None:
+    """Return an error message when *path* cannot be scanned, else None."""
+    if not os.path.exists(path):
+        return f"path does not exist: {path}"
+    if not os.access(path, os.R_OK):
+        return f"path is not readable: {path}"
+    return None
+
+
+def cmd_forensics_inventory(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="forensics inventory", target=args.path)
+    problem = _check_root(args.path)
+    if problem is not None:
+        result.fail(problem)
+        return result
+    try:
+        algos = _forensics_algorithms(args)
+        inv = forensics_inventory_mod.run_inventory(
+            args.path,
+            include=tuple(args.include or ()),
+            exclude=tuple(args.exclude or ()),
+            hash_algorithms=algos,
+        )
+    except (ValidationError, ValueError, OSError) as exc:
+        result.fail(str(exc))
+        return result
+    data = inv.to_dict()
+    result.data = data
+    stats = inv.stats
+    result.summary = (
+        f"{args.path}: {stats.files} file(s), {stats.total_bytes} byte(s), "
+        f"{stats.warnings} warning(s)"
+    )
+    result.add_event(
+        Event(
+            event_type="forensics.inventory.completed",
+            source="aegisforge",
+            evidence={
+                "root": args.path,
+                "files": stats.files,
+                "total_bytes": stats.total_bytes,
+                "warnings": stats.warnings,
+                "algorithms": list(algos),
+            },
+        )
+    )
+    return result
+
+
+def cmd_forensics_manifest(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="forensics manifest", target=args.path)
+    problem = _check_root(args.path)
+    if problem is not None:
+        result.fail(problem)
+        return result
+    try:
+        algos = _forensics_algorithms(args)
+        inv = forensics_inventory_mod.run_inventory(
+            args.path,
+            include=tuple(args.include or ()),
+            exclude=tuple(args.exclude or ()),
+            hash_algorithms=algos,
+        )
+        manifest = forensics_manifest_mod.build_manifest(inv, operator_note=args.note)
+        out_path = forensics_manifest_mod.write_manifest(manifest, args.output)
+    except (ValidationError, ValueError, OSError) as exc:
+        result.fail(str(exc))
+        return result
+    sha = manifest["manifest_sha256"]
+    # Tamper-evidence seam: the manifest digest goes to the audit log.
+    audit_log(
+        {
+            "command": "forensics manifest",
+            "target": args.path,
+            "manifest": out_path,
+            "manifest_sha256": sha,
+            "file_count": manifest["file_count"],
+            "exit_code": EXIT_OK,
+        }
+    )
+    result.data = {
+        "manifest_path": out_path,
+        "manifest_sha256": sha,
+        "file_count": manifest["file_count"],
+        "total_bytes": manifest["total_bytes"],
+        "created": manifest["created"],
+        "root": manifest["root"],
+    }
+    result.summary = (
+        f"manifest written to {out_path}: {manifest['file_count']} file(s), "
+        f"sha256 {sha[:16]}…"
+    )
+    result.add_event(
+        Event(
+            event_type="forensics.manifest.created",
+            source="aegisforge",
+            evidence={
+                "root": args.path,
+                "manifest": out_path,
+                "manifest_sha256": sha,
+                "file_count": manifest["file_count"],
+            },
+        )
+    )
+    return result
+
+
+def cmd_forensics_verify(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="forensics verify", target=args.manifest)
+    try:
+        manifest = forensics_manifest_mod.read_manifest(args.manifest)
+    except ValueError as exc:
+        result.fail(str(exc))
+        return result
+    try:
+        vr = forensics_manifest_mod.verify_manifest(manifest, root=args.root)
+    except (ValueError, OSError) as exc:
+        result.fail(str(exc))
+        return result
+    for finding in forensics_manifest_mod.verify_findings(vr):
+        result.add_finding(finding)
+    result.data = vr.to_dict()
+    result.summary = (
+        f"{args.manifest}: {vr.verified} verified, {len(vr.changed)} changed, "
+        f"{len(vr.missing)} missing, {len(vr.new)} new"
+    )
+    result.add_event(
+        Event(
+            event_type="forensics.verify.completed",
+            source="aegisforge",
+            evidence={
+                "manifest": args.manifest,
+                "root": vr.root,
+                "verified": vr.verified,
+                "changed": len(vr.changed),
+                "missing": len(vr.missing),
+                "new": len(vr.new),
+                "ok": vr.ok,
+            },
+        )
+    )
+    return result
+
+
+def cmd_forensics_duplicates(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="forensics duplicates", target=args.path)
+    problem = _check_root(args.path)
+    if problem is not None:
+        result.fail(problem)
+        return result
+    try:
+        inv = forensics_inventory_mod.run_inventory(
+            args.path,
+            include=tuple(args.include or ()),
+            exclude=tuple(args.exclude or ()),
+            hash_algorithms=("sha256",),
+        )
+    except (ValidationError, ValueError, OSError) as exc:
+        result.fail(str(exc))
+        return result
+    groups = forensics_duplicates_mod.find_duplicates(inv.files)
+    dup_files = sum(g.count for g in groups)
+    result.data = {
+        "root": args.path,
+        "groups": [g.to_dict() for g in groups],
+        "group_count": len(groups),
+        "duplicate_files": dup_files,
+        "files_scanned": inv.stats.files,
+    }
+    result.summary = (
+        f"{args.path}: {len(groups)} duplicate group(s), "
+        f"{dup_files} file(s) sharing content"
+    )
+    result.add_event(
+        Event(
+            event_type="forensics.duplicates.completed",
+            source="aegisforge",
+            evidence={
+                "root": args.path,
+                "groups": len(groups),
+                "duplicate_files": dup_files,
+            },
+        )
+    )
+    return result
+
+
+def cmd_forensics_timeline(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="forensics timeline", target=args.path)
+    problem = _check_root(args.path)
+    if problem is not None:
+        result.fail(problem)
+        return result
+    try:
+        inv = forensics_inventory_mod.run_inventory(
+            args.path,
+            include=tuple(args.include or ()),
+            exclude=tuple(args.exclude or ()),
+            hash_algorithms=(),  # timestamps only; no hashing needed
+        )
+    except (ValidationError, ValueError, OSError) as exc:
+        result.fail(str(exc))
+        return result
+    entries = forensics_timeline_mod.build_timeline(inv.files)
+    if args.limit is not None and args.limit >= 0:
+        entries = entries[: args.limit]
+    result.data = {
+        "root": args.path,
+        "timeline": [e.to_dict() for e in entries],
+        "entries": len(entries),
+        "note": "filesystem timestamps (mtime/atime/ctime) — filesystem "
+        "metadata, not content claims",
+    }
+    result.summary = f"{args.path}: {len(entries)} filesystem timestamp(s)"
+    result.add_event(
+        Event(
+            event_type="forensics.timeline.completed",
+            source="aegisforge",
+            evidence={"root": args.path, "entries": len(entries)},
+        )
+    )
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
@@ -876,6 +1123,129 @@ def render_human(result: Result) -> str:
     return "\n".join(lines)
 
 
+def _short_sha(digest: str | None) -> str:
+    return (digest or "")[:12]
+
+
+def render_forensics_inventory(result: Result) -> str:
+    """Human-readable rendering of a `forensics inventory` result."""
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    stats = data.get("stats", {})
+    lines.append("")
+    lines.append(
+        f"Files: {stats.get('files', 0)}  Directories: {stats.get('directories', 0)}  "
+        f"Total bytes: {stats.get('total_bytes', 0)}"
+    )
+    files = data.get("files", [])
+    if files:
+        lines.append("")
+        lines.append(f"{'PATH':<44}{'SIZE':>10}  {'MTIME':<20}  {'SHA256':<12}  TYPE")
+        for f in files[:50]:
+            lines.append(
+                f"{f.get('path', '')[:44]:<44}{f.get('size', 0):>10}  "
+                f"{(f.get('mtime') or '-')[:19]:<20}  "
+                f"{_short_sha(f.get('hashes', {}).get('sha256')):<12}  "
+                f"{f.get('file_type', '')}"
+                + ("  [extension mismatch]" if f.get("extension_mismatch") else "")
+            )
+        if len(files) > 50:
+            lines.append(f"  ... and {len(files) - 50} more (see --json)")
+    for w in data.get("warnings", [])[:10]:
+        lines.append(f"warning: {w.get('path')}: {w.get('reason')}")
+    return "\n".join(lines)
+
+
+def render_forensics_manifest(result: Result) -> str:
+    """Human-readable rendering of a `forensics manifest` result."""
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    lines.append("")
+    lines.append(f"Manifest: {data.get('manifest_path')}")
+    lines.append(f"SHA-256:  {data.get('manifest_sha256')}")
+    lines.append(
+        f"Files:    {data.get('file_count')} "
+        f"({data.get('total_bytes')} bytes, sealed {data.get('created')})"
+    )
+    lines.append(
+        "The manifest digest was recorded in the audit log "
+        "(tamper-evidence seam, not a legal claim)."
+    )
+    return "\n".join(lines)
+
+
+def render_forensics_verify(result: Result) -> str:
+    """Human-readable rendering of a `forensics verify` result."""
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    if data.get("ok"):
+        lines.append("")
+        lines.append(f"OK: all {data.get('verified')} file(s) match the manifest.")
+        return "\n".join(lines)
+    for label, key in (
+        ("Changed", "changed"),
+        ("Missing", "missing"),
+        ("New", "new"),
+    ):
+        items = data.get(key, [])
+        if items:
+            lines.append("")
+            lines.append(f"{label} ({len(items)}):")
+            for item in items[:20]:
+                lines.append(f"  {item.get('path')}: {item.get('detail')}")
+            if len(items) > 20:
+                lines.append(f"  ... and {len(items) - 20} more (see --json)")
+    if result.findings:
+        lines.append("")
+        lines.append("Findings:")
+        for f in result.findings:
+            lines.append(f"  [{f.severity}] {f.title} (confidence {f.confidence})")
+            if f.reason:
+                lines.append(f"    {f.reason}")
+    return "\n".join(lines)
+
+
+def render_forensics_duplicates(result: Result) -> str:
+    """Human-readable rendering of a `forensics duplicates` result."""
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    for group in data.get("groups", [])[:20]:
+        lines.append("")
+        lines.append(
+            f"sha256 {_short_sha(group.get('sha256'))}… ({group.get('count')} files):"
+        )
+        for path in group.get("paths", []):
+            lines.append(f"  {path}")
+    if len(data.get("groups", [])) > 20:
+        lines.append(f"... and {len(data['groups']) - 20} more groups (see --json)")
+    if not data.get("groups"):
+        lines.append("")
+        lines.append("No duplicate files found.")
+    return "\n".join(lines)
+
+
+def render_forensics_timeline(result: Result) -> str:
+    """Human-readable rendering of a `forensics timeline` result."""
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    lines.append("")
+    lines.append(
+        "Filesystem timestamps (mtime/atime/ctime) — filesystem metadata, "
+        "not content claims."
+    )
+    entries = data.get("timeline", [])
+    if entries:
+        lines.append("")
+        lines.append(f"{'TIMESTAMP (UTC)':<28}{'KIND':<7}PATH")
+        for e in entries[:100]:
+            lines.append(
+                f"{e.get('timestamp', ''):<28}{e.get('kind', ''):<7}{e.get('path', '')}"
+            )
+        if len(entries) > 100:
+            lines.append(f"... and {len(entries) - 100} more (see --json)")
+    return "\n".join(lines)
+
+
 def _csv_rows(result: Result) -> tuple[list[str], list[list[Any]]]:
     """Flatten the primary list in result.data to CSV rows."""
     data = result.data
@@ -929,6 +1299,51 @@ def _csv_rows(result: Result) -> tuple[list[str], list[list[Any]]]:
     elif "log_events" in data:  # logs analyze
         rows = data["log_events"]
         headers = ["line_number", "timestamp", "parser", "host", "severity", "message"]
+    elif "files" in data:  # forensics inventory
+        rows = [
+            {
+                "path": f.get("path"),
+                "size": f.get("size"),
+                "mtime": f.get("mtime"),
+                "sha256": (f.get("hashes") or {}).get("sha256"),
+                "md5": (f.get("hashes") or {}).get("md5"),
+                "sha1": (f.get("hashes") or {}).get("sha1"),
+                "file_type": f.get("file_type"),
+                "type_source": f.get("type_source"),
+            }
+            for f in data["files"]
+        ]
+        headers = [
+            "path",
+            "size",
+            "mtime",
+            "sha256",
+            "md5",
+            "sha1",
+            "file_type",
+            "type_source",
+        ]
+    elif "timeline" in data:  # forensics timeline
+        rows = data["timeline"]
+        headers = ["timestamp", "kind", "path"]
+    elif "groups" in data:  # forensics duplicates
+        rows = [
+            {"sha256": g.get("sha256"), "path": p}
+            for g in data["groups"]
+            for p in g.get("paths", [])
+        ]
+        headers = ["sha256", "path"]
+    elif "changed" in data:  # forensics verify
+        rows = [
+            {"status": status, "path": c.get("path"), "detail": c.get("detail")}
+            for status, key in (
+                ("changed", "changed"),
+                ("missing", "missing"),
+                ("new", "new"),
+            )
+            for c in data.get(key, [])
+        ]
+        headers = ["status", "path", "detail"]
     else:
         rows = [data]
         headers = sorted(data.keys())
@@ -967,6 +1382,16 @@ def render(result: Result, args: argparse.Namespace) -> str:
         result = _redacted_result(result)
     if result.command == "logs analyze" and not args.json and not args.csv:
         return render_logs_analyze(result)
+    if result.command.startswith("forensics ") and not args.json and not args.csv:
+        renderer = {
+            "forensics inventory": render_forensics_inventory,
+            "forensics manifest": render_forensics_manifest,
+            "forensics verify": render_forensics_verify,
+            "forensics duplicates": render_forensics_duplicates,
+            "forensics timeline": render_forensics_timeline,
+        }.get(result.command)
+        if renderer is not None:
+            return renderer(result)
     if args.json:
         return json.dumps(result.to_dict(), indent=2)
     if args.csv:
@@ -1045,9 +1470,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegisforge",
         description="AegisForge — modular defensive-security and DFIR platform "
-        "(v0.4: core + network discovery + port/service analysis + domain "
-        "investigation + log analysis). Commercial software: 1-week free "
-        "trial, see LICENSE.",
+        "(v0.5: core + network discovery + port/service analysis + domain "
+        "investigation + log analysis; v0.4: digital forensics). Commercial "
+        "software: 1-week free trial, see LICENSE.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
@@ -1311,6 +1736,95 @@ def build_parser() -> argparse.ArgumentParser:
         help="mask IP addresses and emails in output (source files untouched)",
     )
     p_analyze.set_defaults(func=cmd_logs_analyze)
+
+    # forensics group (v0.4) — read-only: never modifies scanned files
+    for_p = sub.add_parser("forensics", help="digital forensics")
+    for_sub = for_p.add_subparsers(dest="command", required=True)
+
+    def _add_forensics_path_flags(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--include",
+            action="append",
+            default=None,
+            help="only include paths matching this glob (repeatable)",
+        )
+        p.add_argument(
+            "--exclude",
+            action="append",
+            default=None,
+            help="exclude paths matching this glob (repeatable)",
+        )
+
+    def _add_hash_flags(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--algorithms",
+            action="append",
+            default=None,
+            choices=["sha256", "md5", "sha1"],
+            help="hash algorithm (repeatable, default: sha256)",
+        )
+
+    p_finv = for_sub.add_parser(
+        "inventory",
+        help="recursive read-only file inventory with hashing",
+        parents=parents,
+    )
+    p_finv.add_argument("path", help="file or directory to inventory")
+    _add_forensics_path_flags(p_finv)
+    _add_hash_flags(p_finv)
+    p_finv.set_defaults(func=cmd_forensics_inventory)
+
+    p_fman = for_sub.add_parser(
+        "manifest",
+        help="inventory a tree and write a sealed evidence manifest",
+        parents=parents,
+    )
+    p_fman.add_argument("path", help="file or directory to inventory")
+    p_fman.add_argument(
+        "--output", required=True, help="where to write the manifest JSON"
+    )
+    p_fman.add_argument(
+        "--note", default=None, help="operator note recorded in the manifest"
+    )
+    _add_forensics_path_flags(p_fman)
+    _add_hash_flags(p_fman)
+    p_fman.set_defaults(func=cmd_forensics_manifest)
+
+    p_fver = for_sub.add_parser(
+        "verify",
+        help="verify a live tree against a manifest (changed/missing/new)",
+        parents=parents,
+    )
+    p_fver.add_argument(
+        "--manifest", required=True, help="manifest JSON to verify against"
+    )
+    p_fver.add_argument(
+        "--root",
+        default=None,
+        help="tree to verify (default: root recorded in the manifest)",
+    )
+    p_fver.set_defaults(func=cmd_forensics_verify)
+
+    p_fdup = for_sub.add_parser(
+        "duplicates",
+        help="group files with identical SHA-256 content",
+        parents=parents,
+    )
+    p_fdup.add_argument("path", help="file or directory to scan")
+    _add_forensics_path_flags(p_fdup)
+    p_fdup.set_defaults(func=cmd_forensics_duplicates)
+
+    p_ftime = for_sub.add_parser(
+        "timeline",
+        help="chronological filesystem timestamps (mtime/atime/ctime)",
+        parents=parents,
+    )
+    p_ftime.add_argument("path", help="file or directory to scan")
+    _add_forensics_path_flags(p_ftime)
+    p_ftime.add_argument(
+        "--limit", type=int, default=None, help="max timeline entries shown"
+    )
+    p_ftime.set_defaults(func=cmd_forensics_timeline)
 
     return parser
 
