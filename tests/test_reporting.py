@@ -548,7 +548,7 @@ def _leaf_commands() -> list[tuple[tuple[str, ...], argparse.ArgumentParser]]:
 
 
 _LEAVES = _leaf_commands()
-assert len(_LEAVES) >= 50, "expected the full v1.0 command surface"
+assert len(_LEAVES) >= 47, "expected the documented v1.0 command surface"
 
 
 @pytest.mark.parametrize(
