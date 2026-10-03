@@ -1,4 +1,5 @@
-"""AegisForge CLI: ``aegisforge network ...`` / ``aegisforge domain ...`` (v0.3).
+"""AegisForge CLI: ``aegisforge network ...`` / ``aegisforge domain ...`` /
+``aegisforge logs ...`` (v0.4).
 
 Every command returns a shared result envelope, renders human-readable
 text by default (``--json`` / ``--csv`` for automation), uses structured
@@ -14,6 +15,12 @@ passive DNS/RDAP/WHOIS/HTTP lookups consolidated into one report.
 Unlike port scanning, these are directory lookups the target's public
 services already answer for any client, so no ``--allow-remote`` gate
 is required.
+
+v0.4 adds log analysis (``logs detect``, ``logs analyze``): streaming
+parsers for syslog, Apache/Nginx, JSON lines, Windows Event XML
+exports and key=value, with format auto-detection, timeline,
+histograms, top talkers, error extraction and burst detection.
+``--redact`` masks IPs/emails in output only (source files untouched).
 """
 
 from __future__ import annotations
@@ -36,6 +43,12 @@ from aegisforge.core.logging import audit_log, configure_logging, get_logger
 from aegisforge.core.results import EXIT_ERROR, Result, exit_code_for
 from aegisforge.domain import dns_client as domain_dns_client
 from aegisforge.domain import investigate as investigate_mod
+from aegisforge.logs import analyze as logs_analyze_mod
+from aegisforge.logs import detect as logs_detect_mod
+from aegisforge.logs import redact as logs_redact_mod
+from aegisforge.logs.analyze import AnalyzeOptions
+from aegisforge.logs.filters import LogFilter
+from aegisforge.logs.models import PARSER_UNKNOWN
 from aegisforge.network import baselines as baselines_mod
 from aegisforge.network import dns as dns_mod
 from aegisforge.network import interfaces as interfaces_mod
@@ -601,6 +614,104 @@ def cmd_domain_investigate(args: argparse.Namespace, cfg: AppConfig) -> Result:
 
 
 # ---------------------------------------------------------------------------
+# v0.4: log analysis commands
+# ---------------------------------------------------------------------------
+
+
+def cmd_logs_detect(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="logs detect", target=args.file)
+    try:
+        detection = logs_detect_mod.detect_file(args.file)
+    except OSError as exc:
+        result.fail(f"cannot read {args.file}: {exc}")
+        return result
+    result.data = {"file": args.file, **detection.to_dict()}
+    if detection.parser == PARSER_UNKNOWN:
+        result.summary = (
+            f"{args.file}: log format unknown "
+            f"(best score {detection.confidence:.2f}); pass --format explicitly"
+        )
+    else:
+        result.summary = (
+            f"{args.file}: detected {detection.parser} format "
+            f"(confidence {detection.confidence:.2f})"
+        )
+    result.add_event(
+        Event(
+            event_type="logs.format.detected",
+            source="aegisforge",
+            evidence={
+                "file": args.file,
+                "parser": detection.parser,
+                "confidence": round(detection.confidence, 3),
+            },
+        )
+    )
+    return result
+
+
+def cmd_logs_analyze(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="logs analyze", target=args.file)
+    try:
+        filt = LogFilter(
+            since=args.since,
+            until=args.until,
+            levels=tuple(args.level or ()),
+            contains=tuple(args.contains or ()),
+            not_contains=tuple(args.not_contains or ()),
+            host=args.host,
+            limit=args.limit,
+        )
+        options = AnalyzeOptions(
+            parser_name=args.format,
+            burst_window=(
+                args.burst_window
+                if args.burst_window is not None
+                else cfg["logs_burst_window"]
+            ),
+            burst_threshold=(
+                args.burst_threshold
+                if args.burst_threshold is not None
+                else cfg["logs_burst_threshold"]
+            ),
+            context_lines=(
+                args.context if args.context is not None else cfg["logs_context_lines"]
+            ),
+        )
+        analysis = logs_analyze_mod.analyze_file(args.file, filt, options)
+    except (ValidationError, ValueError, OSError) as exc:
+        result.fail(str(exc))
+        return result
+    data = analysis.to_dict()
+    # Rename for the CSV renderer (primary table = the matched events).
+    data["log_events"] = data.pop("events")
+    data["filters"] = filt.describe()
+    data["redacted"] = bool(args.redact)
+    result.data = data
+    for finding in analysis.findings:
+        result.add_finding(finding)
+    result.summary = (
+        f"{args.file}: {analysis.events_matched} event(s) matched "
+        f"({analysis.parser}), {len(analysis.findings)} finding(s), "
+        f"{analysis.warning_count} warning(s)"
+    )
+    result.add_event(
+        Event(
+            event_type="logs.analysis.completed",
+            source="aegisforge",
+            evidence={
+                "file": args.file,
+                "parser": analysis.parser,
+                "events_matched": analysis.events_matched,
+                "warnings": analysis.warning_count,
+                "findings": len(analysis.findings),
+            },
+        )
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
 
@@ -626,6 +737,96 @@ def _kv_lines(data: dict[str, Any], indent: int = 0) -> list[str]:
         else:
             lines.append(f"{pad}{key}: {value}")
     return lines
+
+
+def _hist_lines(title: str, pairs: list[list[Any]]) -> list[str]:
+    lines = [f"{title}:"]
+    if not pairs:
+        lines.append("  (none)")
+        return lines
+    width = max(len(str(p[0])) for p in pairs)
+    for key, count in pairs:
+        lines.append(f"  {str(key):<{width}}  {count}")
+    return lines
+
+
+def render_logs_analyze(result: Result) -> str:
+    """Human-readable rendering of a `logs analyze` result envelope."""
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    detection = data.get("detection", {})
+    lines.append("")
+    lines.append(
+        f"Format: {data.get('parser')} (confidence {detection.get('confidence', '?')})"
+    )
+    lines.append(
+        f"Lines: {data.get('total_lines')} parsed, "
+        f"{data.get('events_matched')} matched, "
+        f"{data.get('warning_count')} warnings"
+    )
+    if data.get("time_first"):
+        lines.append(f"Time range: {data['time_first']} .. {data['time_last']}")
+    if data.get("filters"):
+        lines.append(
+            "Filters: " + ", ".join(f"{k}={v}" for k, v in data["filters"].items())
+        )
+    if data.get("warnings"):
+        lines.append("")
+        lines.append(f"Parse warnings (showing {len(data['warnings'])}):")
+        for w in data["warnings"][:10]:
+            lines.append(f"  line {w.get('line_number')}: {w.get('reason')}")
+    lines.append("")
+    lines.extend(
+        _hist_lines(
+            "Severity",
+            [[k, v] for k, v in data.get("severity_histogram", {}).items()],
+        )
+    )
+    if data.get("status_histogram"):
+        lines.append("")
+        lines.extend(
+            _hist_lines(
+                "HTTP status",
+                [[k, v] for k, v in data.get("status_histogram", {}).items()],
+            )
+        )
+    lines.append("")
+    lines.extend(_hist_lines("Top IPs", data.get("top_ips", [])))
+    lines.append("")
+    lines.extend(_hist_lines("Top hosts", data.get("top_hosts", [])))
+    if data.get("bursts"):
+        lines.append("")
+        lines.append("Bursts:")
+        for b in data["bursts"]:
+            key = f" [{b['key']}]" if b.get("key") else ""
+            window = f"{b['window_start']} (+{b.get('window_end') or ''}){key}"
+            lines.append(f"  {window}: {b['count']} events")
+    if data.get("errors"):
+        lines.append("")
+        lines.append(f"Errors ({len(data['errors'])} shown):")
+        for entry in data["errors"][:10]:
+            event = entry["event"]
+            lines.append(
+                f"  line {event.get('line_number')} [{event.get('severity')}] "
+                f"{(event.get('message') or '')[:100]}"
+            )
+            for ctx in entry.get("context_before", []):
+                lines.append(f"    | {ctx[:100]}")
+            for ctx in entry.get("context_after", []):
+                lines.append(f"    | {ctx[:100]}")
+    if data.get("hourly"):
+        lines.append("")
+        lines.extend(_hist_lines("Events per hour", data["hourly"][:12]))
+        if len(data["hourly"]) > 12:
+            lines.append(f"  ... and {len(data['hourly']) - 12} more buckets")
+    if result.findings:
+        lines.append("")
+        lines.append("Findings:")
+        for f in result.findings:
+            lines.append(f"  [{f.severity}] {f.title} (confidence {f.confidence})")
+            if f.reason:
+                lines.append(f"    {f.reason}")
+    return "\n".join(lines)
 
 
 def render_human(result: Result) -> str:
@@ -725,6 +926,9 @@ def _csv_rows(result: Result) -> tuple[list[str], list[list[Any]]]:
     elif "records" in data:  # domain dns
         rows = data["records"]
         headers = ["name", "rtype", "ttl", "detail"]
+    elif "log_events" in data:  # logs analyze
+        rows = data["log_events"]
+        headers = ["line_number", "timestamp", "parser", "host", "severity", "message"]
     else:
         rows = [data]
         headers = sorted(data.keys())
@@ -737,7 +941,32 @@ def _csv_rows(result: Result) -> tuple[list[str], list[list[Any]]]:
     return headers, table
 
 
+def _redacted_result(result: Result) -> Result:
+    """Copy of *result* with IPs/emails masked (output only, never source)."""
+    redacted = Result(
+        command=result.command,
+        target=(logs_redact_mod.redact_text(result.target) if result.target else None),
+        status=result.status,
+        summary=logs_redact_mod.redact_text(result.summary),
+        data=logs_redact_mod.redact_value(result.data),
+        tool=result.tool,
+        version=result.version,
+        timestamp=result.timestamp,
+    )
+    for finding in result.findings:
+        redacted.findings.append(
+            Finding(**logs_redact_mod.redact_value(finding.to_dict()))
+        )
+    for event in result.events:
+        redacted.events.append(Event(**logs_redact_mod.redact_value(event.to_dict())))
+    return redacted
+
+
 def render(result: Result, args: argparse.Namespace) -> str:
+    if getattr(args, "redact", False) and result.command.startswith("logs "):
+        result = _redacted_result(result)
+    if result.command == "logs analyze" and not args.json and not args.csv:
+        return render_logs_analyze(result)
     if args.json:
         return json.dumps(result.to_dict(), indent=2)
     if args.csv:
@@ -816,8 +1045,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegisforge",
         description="AegisForge — modular defensive-security and DFIR platform "
-        "(v0.3: core + network discovery + port/service analysis + domain "
-        "investigation). Commercial software: 1-week free trial, see LICENSE.",
+        "(v0.4: core + network discovery + port/service analysis + domain "
+        "investigation + log analysis). Commercial software: 1-week free "
+        "trial, see LICENSE.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
@@ -1007,6 +1237,80 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_timeout_flags(p_inv)
     p_inv.set_defaults(func=cmd_domain_investigate)
+
+    # logs group (v0.4)
+    logs_p = sub.add_parser("logs", help="log analysis")
+    logs_sub = logs_p.add_subparsers(dest="command", required=True)
+
+    p_detect = logs_sub.add_parser(
+        "detect", help="auto-detect the format of a log file", parents=parents
+    )
+    p_detect.add_argument("file", help="path to the log file")
+    p_detect.set_defaults(func=cmd_logs_detect)
+
+    p_analyze = logs_sub.add_parser(
+        "analyze", help="analyze a log file (streaming)", parents=parents
+    )
+    p_analyze.add_argument("file", help="path to the log file")
+    p_analyze.add_argument(
+        "--format",
+        default="auto",
+        choices=["auto", "syslog", "apache", "json", "winevent", "keyvalue"],
+        help="log format (default: auto-detect)",
+    )
+    p_analyze.add_argument(
+        "--since", default=None, help="only events at/after an ISO-8601 time"
+    )
+    p_analyze.add_argument(
+        "--until", default=None, help="only events at/before an ISO-8601 time"
+    )
+    p_analyze.add_argument(
+        "--level",
+        action="append",
+        default=None,
+        choices=["info", "low", "medium", "high", "critical"],
+        help="only events at this severity (repeatable)",
+    )
+    p_analyze.add_argument(
+        "--contains",
+        action="append",
+        default=None,
+        help="only events containing this text (repeatable)",
+    )
+    p_analyze.add_argument(
+        "--not-contains",
+        action="append",
+        default=None,
+        help="exclude events containing this text (repeatable)",
+    )
+    p_analyze.add_argument("--host", default=None, help="only events from this host")
+    p_analyze.add_argument(
+        "--limit", type=int, default=None, help="max events kept for display"
+    )
+    p_analyze.add_argument(
+        "--burst-window",
+        type=int,
+        default=None,
+        help="burst detection window in seconds (default 60)",
+    )
+    p_analyze.add_argument(
+        "--burst-threshold",
+        type=int,
+        default=None,
+        help="events per window to flag a burst (default 50)",
+    )
+    p_analyze.add_argument(
+        "--context",
+        type=int,
+        default=None,
+        help="context lines kept around error events (default 3)",
+    )
+    p_analyze.add_argument(
+        "--redact",
+        action="store_true",
+        help="mask IP addresses and emails in output (source files untouched)",
+    )
+    p_analyze.set_defaults(func=cmd_logs_analyze)
 
     return parser
 

@@ -16,10 +16,10 @@ In v0.2 there is **no lockout** — the licensing seam is in place
 (`aegisforge/core/license.py`) and commercial enforcement activates in a
 later release.
 
-## What v0.3 does
+## What v0.5 does
 
-Core + Network Discovery + authorized port/service analysis + **domain
-investigation**:
+Core + Network Discovery + authorized port/service analysis + domain
+investigation + **log analysis**:
 
 | Command | What it does |
 |---|---|
@@ -37,6 +37,8 @@ investigation**:
 | `aegisforge network baseline delete NAME` | Delete a stored baseline |
 | `aegisforge domain dns NAME [--type MX]` | Raw DNS records (A/AAAA/MX/NS/TXT/SOA/CNAME/DNSKEY/DS) via a stdlib wire-protocol client |
 | `aegisforge domain investigate DOMAIN` | Consolidated report: DNS records, reverse DNS, NS/MX analysis, DNSSEC presence, TLS cert, RDAP (+WHOIS fallback), ASN ownership, HTTP/HTTPS headers & redirects |
+| `aegisforge logs detect FILE` | Auto-detect the log format (syslog, Apache/Nginx, JSON lines, Windows Event XML, key=value) with confidence scores |
+| `aegisforge logs analyze FILE [--format auto] [--since ...] [--until ...] [--level ...] [--contains ...] [--host ...] [--redact]` | Streaming analysis: timeline, severity/HTTP-status histograms, top talkers, error extraction with context, burst detection, observed-vs-inferred findings |
 | `aegisforge config show` | Show effective configuration |
 
 ### Investigation safety: passive lookups, no consent gate
@@ -102,6 +104,60 @@ Findings:
 
 Findings keep the observed-vs-inferred discipline: what was seen goes
 in the evidence, what it might mean goes in the reason.
+
+### Log analysis: streaming parsers, honest findings
+
+`logs analyze` parses syslog (RFC 3164/5424), Apache/Nginx combined
+and common logs, JSON lines, Windows Event Log XML exports, and
+generic `key=value` — streaming, never loading the whole file into
+memory. The format is auto-detected (with reported confidence) unless
+you pass `--format`. Analysis builds a UTC timeline, severity and
+HTTP-status histograms, top talkers, error extraction with context
+lines, and burst detection. Detections (auth-failure bursts, 5xx
+spikes, exception clusters) keep the observed-vs-inferred discipline:
+a burst of 404s is *observed*; calling it an attack is *inferred* and
+is labeled as such.
+
+```console
+$ aegisforge logs detect /var/log/auth.log
+/var/log/auth.log: detected syslog format (confidence 0.93)
+
+$ aegisforge logs analyze /var/log/auth.log --since 2026-10-02T16:00:00Z
+/var/log/auth.log: 14 event(s) matched (syslog), 1 finding(s), 1 warning(s)
+
+Format: syslog (confidence 0.933)
+Lines: 14 parsed, 14 matched, 1 warnings
+Time range: 2026-10-02T16:00:01Z .. 2026-10-02T16:10:00Z
+
+Parse warnings (showing 1):
+  line 14: not a recognized syslog line
+
+Severity:
+  info  14
+
+Top IPs:
+  203.0.113.7    12
+  198.51.100.23  1
+
+Findings:
+  [medium] authentication-failure burst from 203.0.113.7 (confidence 70)
+    OBSERVED: 12 failed authentication attempts from 203.0.113.7 within
+    300s (window starting 2026-10-02T16:00:01Z). INFERRED: pattern is
+    consistent with password-guessing (brute-force) activity —
+    corroborate before concluding.
+```
+
+Logs often contain PII. `--redact` masks IPv4/IPv6 addresses and
+email-like tokens in the *output* (human, `--json`, `--csv`) — the
+source files are never modified, and analysis keeps the original
+values so counts stay accurate:
+
+```console
+$ aegisforge logs analyze /var/log/auth.log --redact | grep -A3 "Top IPs"
+Top IPs:
+  xxx.xxx.xxx.xxx  12
+  xxx.xxx.xxx.xxx  1
+```
 
 ### Scan safety: authorized targets only
 
@@ -239,6 +295,19 @@ $ aegisforge network dns 93.184.216.34 --json
   },
   ...
 }
+```
+
+```console
+$ aegisforge logs analyze /var/log/auth.log --redact --level info --limit 5
+/var/log/auth.log: 14 event(s) matched (syslog), 1 finding(s), 1 warning(s)
+
+Format: syslog (confidence 0.933)
+...
+Top IPs:
+  xxx.xxx.xxx.xxx  12
+  xxx.xxx.xxx.xxx  1
+$ echo $?
+1
 ```
 
 See [docs/USAGE.md](docs/USAGE.md) for a scenario walkthrough with

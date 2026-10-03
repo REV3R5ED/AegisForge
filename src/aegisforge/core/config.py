@@ -42,6 +42,9 @@ DEFAULTS: dict[str, Any] = {
     "domain_http_timeout": 10.0,
     "rdap_timeout": 10.0,
     "whois_timeout": 10.0,
+    "logs_burst_window": 60,
+    "logs_burst_threshold": 50,
+    "logs_context_lines": 3,
 }
 
 _PROFILE_DEFAULT = "default"

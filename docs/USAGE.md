@@ -152,3 +152,39 @@ version.
 Unlike port scanning, all of this is passive directory lookups —
 nothing is sent to the target that its public services don't already
 answer for anyone, so there's no `--allow-remote` gate here.
+
+## What's next — v0.5: log analysis
+
+> **Scenario continues:** the domain checks out, but the server's
+> auth log tells a different story. Point AegisForge at the log file
+> — it detects the format, parses it streaming, and hunts for
+> trouble.
+
+```console
+$ aegisforge logs detect auth.log
+auth.log: detected syslog format (confidence 0.93)
+
+$ aegisforge logs analyze auth.log
+auth.log: 13 event(s) matched (syslog), 1 finding(s), 1 warning(s)
+```
+
+![Log analysis catching an authentication-failure burst](images/05-logs-analysis.png)
+
+Behind that summary: syslog (RFC 3164/5424), Apache/Nginx, JSON
+lines, Windows Event XML exports and `key=value` parsers — all
+streaming, so multi-gigabyte files never get loaded into memory.
+Malformed lines become warnings with line numbers instead of
+crashing the parse. Analysis builds a UTC timeline, severity and
+HTTP-status histograms, top talkers, error extraction with context
+lines, and burst detection. Detections keep the observed-vs-inferred
+discipline you see above: 12 failed logins is *observed*; calling it
+brute-force is *inferred* — and labeled as such.
+
+Filters compose freely — `--since`, `--until`, `--level`,
+`--contains`/`--not-contains`, `--host`, `--limit` — and because logs
+carry PII, `--redact` masks IPs and emails in the output while the
+source file stays untouched:
+
+```console
+$ aegisforge logs analyze auth.log --redact --since 2026-10-02T16:00:00Z
+```

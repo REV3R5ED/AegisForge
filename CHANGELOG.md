@@ -5,6 +5,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-02
+
+### Added
+
+- Log analysis module (`logs/`, v0.5): `aegisforge logs detect FILE`
+  auto-detects the format (syslog RFC 3164/5424, Apache/Nginx combined
+  and common, JSON lines, Windows Event Log XML exports, generic
+  key=value) and reports the chosen parser with confidence scores;
+  `aegisforge logs analyze FILE` streams the file (never loaded wholly
+  into memory) and builds a UTC timeline, severity and HTTP-status
+  histograms, top talkers (IPs/hosts), error extraction with context
+  lines, and burst detection with configurable window/threshold.
+- Composable filters: `--since`/`--until`, `--level`, `--contains`/
+  `--not-contains`, `--host`, `--limit`; malformed lines become
+  warnings with line numbers, never crash the parse.
+- Detections feed `core/findings.py` with the observed-vs-inferred
+  discipline: auth-failure bursts (syslog patterns + Windows 4625),
+  HTTP 5xx spikes, and exception clusters. A burst of 404s is
+  *observed*; calling it an attack is *inferred* — labeled as such in
+  every finding reason.
+- `--redact` flag masks IPv4/IPv6 addresses and email-like tokens in
+  *output only* (human, `--json`, `--csv`); source files are never
+  modified and in-memory analysis keeps original values.
+- New config knobs: `logs_burst_window`, `logs_burst_threshold`,
+  `logs_context_lines`.
+- Scenario guide (`docs/USAGE.md`) extended with a log-analysis step
+  and a real terminal screenshot.
+
 ## [0.3.0] - 2026-10-02
 
 ### Added
