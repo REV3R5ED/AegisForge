@@ -104,6 +104,10 @@ def parse_iso_timestamp(value: Any) -> str | None:
     if not text:
         return None
     candidate = text.replace("Z", "+00:00") if text.endswith(("Z", "z")) else text
+    # Python < 3.11 fromisoformat only accepts 3 or 6 fractional-second digits;
+    # Windows emits 7 (.NET ticks). Truncate to microseconds (the most Python
+    # can represent) so parsing behaves identically on 3.10–3.13.
+    candidate = _LONG_FRACTION_RE.sub(lambda m: "." + m.group(1)[:6], candidate)
     try:
         return to_utc_iso(datetime.fromisoformat(candidate))
     except ValueError:
@@ -270,6 +274,9 @@ _APACHE = re.compile(
     r'(?: "([^"]*)" "([^"]*)")?\s*$'
 )
 _APACHE_TIME = "%d/%b/%Y:%H:%M:%S %z"
+
+# Fractional seconds with more than 6 digits (e.g. Windows 7-digit ticks).
+_LONG_FRACTION_RE = re.compile(r"\.(\d{7,})")
 
 
 def _apache_severity(status: int) -> str:

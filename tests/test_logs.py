@@ -25,6 +25,7 @@ from aegisforge.logs.parsers import (
     WindowsXmlParser,
     get_parser,
     iter_parsed_file,
+    parse_iso_timestamp,
 )
 from aegisforge.logs.redact import redact_text, redact_value
 from aegisforge.network.validation import ValidationError
@@ -189,6 +190,24 @@ def test_json_lines_malformed_become_warnings():
 # ---------------------------------------------------------------------------
 # Windows Event XML parser
 # ---------------------------------------------------------------------------
+
+
+def test_iso_timestamp_truncates_long_fractional_seconds():
+    # Windows/.NET timestamps carry 7 fractional digits; Python < 3.11
+    # fromisoformat only accepts 3 or 6. Truncate to microseconds so
+    # parsing behaves identically on 3.10–3.13.
+    assert (
+        parse_iso_timestamp("2026-10-02T16:00:01.1234567Z")
+        == "2026-10-02T16:00:01.123456Z"
+    )
+    assert (
+        parse_iso_timestamp("2026-10-02T16:00:01.123456Z")
+        == "2026-10-02T16:00:01.123456Z"
+    )
+    assert (
+        parse_iso_timestamp("2026-10-02T16:00:01.123Z") == "2026-10-02T16:00:01.123000Z"
+    )
+    assert parse_iso_timestamp("not-a-timestamp") is None
 
 
 def test_winevent_xml_fragment():
