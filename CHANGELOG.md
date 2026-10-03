@@ -5,6 +5,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-03
+
+### Added
+
+- Professional reporting (`reporting/`, v1.0): a unified report data
+  model rendered as self-contained HTML, stdlib-only PDF, JSON and
+  per-section CSVs (`report.html`, `report.pdf`, `report.json`,
+  `findings.csv`, `timeline.csv`, `evidence.csv`, `indicators.csv`,
+  plus a `report-manifest.json` with SHA-256 per artifact).
+- `report case CASE-ID --output DIR --format [html|pdf|json|csv|all]
+  [--force]`: full case report containing an auto-generated executive
+  summary (counts, top findings, date range — labelled "generated",
+  analyst review required), case/evidence inventory with hashes, a
+  methodology section describing each module's methods and limitations,
+  findings with explicit OBSERVED/INFERRED splits, a chronological
+  evidence-backed timeline, deduped indicators with offline verdicts,
+  analyst notes, and a supporting-evidence hash appendix.
+- "What this report does not claim" box in every executive summary:
+  no attribution, scores describe observation strength never causation,
+  timestamps may be wrong, "no findings" is not "no compromise",
+  verdicts are provider data not ground truth, severity/confidence are
+  judgments not measurements.
+- `report pcap --file`, `report logs --file`, `report forensics --path`,
+  `report domain --target`: standalone single-analysis reports reusing
+  the same template sections where applicable (sections that do not
+  apply, e.g. indicator enrichment for scans, carry an explicit note).
+- HTML reports are single self-contained files (inline CSS, no external
+  assets, anchored sections) that render from `file://` with no network.
+  The PDF is a clean multi-page print-friendly *text* rendering written
+  with the standard library only (no reportlab dependency) — documented
+  as such; the HTML report is the rich version.
+- Indicator verdicts in case reports come from the local blocklist only
+  (fully offline); unconfigured indicators are honestly reported as
+  verdict `unknown` instead of being silently dropped.
+- `aegisforge version`: prints the tool version plus every registered
+  module's version (human-readable, `--json` for automation).
+- CLI stability promise (v1.x): commands and flags will not be renamed
+  or removed without a deprecation period. Documented in the README;
+  enforced by a parametrized audit test asserting `--json`/`--csv` on
+  all 53 leaf subcommands.
+
 ## [0.9.0] - 2026-10-03
 
 ### Added

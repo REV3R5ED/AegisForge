@@ -16,13 +16,15 @@ In v0.2 there is **no lockout** — the licensing seam is in place
 (`aegisforge/core/license.py`) and commercial enforcement activates in a
 later release.
 
-## What v0.9 does
+## What v1.0 does
 
 Core + Network Discovery + authorized port/service analysis + domain
 investigation + **log analysis** + **digital forensics** (v0.4, shipped
 right after v0.5 per the master plan's numbering) + **incident-response
 engine** (case management) + **offline PCAP analysis** +
-**threat-intel enrichment** + **correlation engine**:
+**threat-intel enrichment** + **correlation engine** + **professional
+reporting** (HTML/PDF/JSON/CSV case and scan reports with observed-vs-
+inferred findings, executive summaries and methodology):
 
 | Command | What it does |
 |---|---|
@@ -71,7 +73,24 @@ engine** (case management) + **offline PCAP analysis** +
 | `aegisforge correlate run --case CASE-ID [--window 1h] [--min-sources 2] [--explain]` | Correlate a case: normalized entities, pivots, temporal links, explainable scores |
 | `aegisforge correlate entities --case CASE-ID` | List every normalized entity in a case with source counts |
 | `aegisforge correlate timeline --case CASE-ID` | Incident timeline: case events merged with pivot points |
+| `aegisforge report case CASE-ID --output DIR [--format html\|pdf\|json\|csv\|all]` | Full case report: auto-generated executive summary (labelled, analyst must review), evidence inventory with hashes, methodology, findings with OBSERVED/INFERRED splits, timeline, deduped indicators with offline verdicts, supporting-evidence hash appendix |
+| `aegisforge report pcap --file X.pcap --output DIR [--format ...]` | Standalone report for one PCAP analysis (same template where applicable) |
+| `aegisforge report logs --file Y.log --output DIR [--format ...]` | Standalone report for one log analysis |
+| `aegisforge report forensics --path DIR --output DIR [--format ...]` | Standalone report for one filesystem inventory |
+| `aegisforge report domain --target DOMAIN --output DIR [--format ...]` | Standalone report for one domain investigation |
+| `aegisforge version` | Tool version plus every registered module's version |
 | `aegisforge config show` | Show effective configuration |
+
+### CLI stability promise (v1.x)
+
+The v1.0 command surface is stable: within v1.x, commands and flags
+will not be renamed or removed without a deprecation period (a renamed
+command keeps working for at least one minor release and warns on
+stderr). Every subcommand accepts `--json` (the full result envelope)
+and `--csv` (primary data flattened); exit codes are `0` ok,
+`1` findings/warnings, `2` error. An automated audit
+(`tests/test_reporting.py`) asserts `--json`/`--csv` on every leaf
+subcommand.
 
 ### Investigation safety: passive lookups, no consent gate
 
@@ -252,6 +271,33 @@ never modifies the case store.
 `correlate timeline` merges the case timeline with pivot events:
 chronological, pivot points highlighted (`>>>`), every entry
 evidence-backed.
+
+### Reporting: the report is the product
+
+`report case` turns a case into a distributable package — one command,
+`--format html|pdf|json|csv|all`:
+
+- **Executive summary**, auto-generated from the case data (counts,
+  top findings, date range), labelled "generated" with a note that an
+  analyst must review it — followed by a **"What this report does not
+  claim"** box (no attribution, scores are observation strength never
+  causation, timestamps may be wrong, "no findings" ≠ "no compromise").
+- **Evidence inventory** — every attached item with its SHA-256.
+- **Methodology** — what each module does, how it works, and what it
+  cannot do, with module versions from the plugin registry.
+- **Findings** with explicit OBSERVED/INFERRED splits (green/orange in
+  HTML); severity and confidence are always presented as judgments.
+- **Timeline** (chronological, evidence-backed), **deduped indicators**
+  with offline blocklist verdicts (`unknown` when unconfigured — never
+  silently dropped), analyst notes, and a **supporting-evidence hash
+  appendix** with a per-artifact SHA-256 manifest.
+
+The HTML report is a single self-contained file (inline CSS, no
+external assets, `file://`-safe). The PDF is written with the standard
+library only — a clean multi-page print-friendly *text* rendering, not
+a pixel-perfect layout; the HTML is the rich version. `report
+pcap|logs|forensics|domain` produce the same template for a single
+analysis without a case.
 
 Every command emits human-readable output by default, `--json` and
 `--csv` for automation, and structured exit codes:

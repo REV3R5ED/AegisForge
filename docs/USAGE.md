@@ -485,3 +485,91 @@ and the tool never claims one event caused another.
 Pivots scoring at or above `correlate_pivot_threshold` (default 70)
 become findings under the usual observed-vs-inferred split, and
 correlation is strictly read-only — it never touches the case store.
+
+## What's next — v1.0: professional reporting
+
+> **Scenario continues:** the case is built — evidence attached and
+> hashed, a finding recorded with the attacker's IP linked, a note from
+> the on-call. Now the shift lead wants a report, not a terminal
+> session. One command turns the whole case into a distributable
+> package: HTML for reading, PDF for printing, JSON for tooling, CSVs
+> for spreadsheets — every finding keeping its observations separate
+> from its inferences.
+
+```console
+$ aegisforge report case CASE-2026-001 --output ./case-report --format all
+Case report: CASE-2026-001 written to case-report: 8 artifact(s) (all)
+
+  output:    case-report
+  artifacts: 8
+
+  report manifest (SHA-256 per artifact):
+    evidence.csv: 5749ccd9cbb3c8e7…
+    findings.csv: 3607f952394902b7…
+    indicators.csv: 19ae724cced3b912…
+    report.html: 067adac638c1445e…
+    report.json: 6dbfda2a99d184d6…
+    report.pdf: bc457591f5bea94d…
+    timeline.csv: 0833b8a5978aded1…
+    report-manifest.json
+
+$ ls case-report
+evidence.csv
+findings.csv
+indicators.csv
+report-manifest.json
+report.html
+report.json
+report.pdf
+timeline.csv
+```
+
+![Full case report generated with one command: HTML, PDF, JSON and per-section CSVs with a SHA-256 manifest](images/11-report-case.png)
+
+The report opens with an **executive summary that admits it is
+machine-written** — counts, top findings and date range generated from
+the case data, labelled "generated", with a note that an analyst must
+review it before distribution. Right below it sits a box titled
+**"What this report does not claim"**: no attribution, scores describe
+observation strength never causation, timestamps may be wrong, "no
+findings" is not "no compromise". Then the evidence inventory (every
+item with its SHA-256), a methodology section that describes each
+module's methods *and limitations*, findings split into green
+OBSERVED blocks and orange INFERRED blocks, the chronological
+timeline, deduped indicators with offline blocklist verdicts, and a
+supporting-evidence hash appendix.
+
+Single analyses get the same treatment without a case:
+
+```console
+$ aegisforge report logs --file /var/log/auth.log --output ./auth-report --format html
+logs report: /var/log/auth.log written to auth-report: 2 artifact(s) (html)
+```
+
+The PDF deserves one honest footnote: it is written with the standard
+library only — a clean multi-page print-friendly *text* rendering, not
+a pixel-perfect layout engine. The HTML report is the rich version;
+the PDF is the one you hand to someone with a printer.
+
+And the CLI itself makes a promise at 1.0: **the command surface is
+stable.** Commands and flags will not be renamed or removed in v1.x
+without a deprecation period. Every subcommand accepts `--json` (the
+full result envelope) and `--csv`, exit codes stay `0` ok /
+`1` findings / `2` error, and `aegisforge version` prints the tool
+version plus every registered module's version:
+
+```console
+$ aegisforge version
+aegisforge 1.0.0
+
+modules:
+  cases: 0.6.0
+  correlate: 0.9.0
+  domain: 0.3.0
+  forensics: 0.4.0
+  intel: 0.8.0
+  logs: 0.5.0
+  network: 0.2.0
+  pcap: 0.7.0
+  reporting: 1.0.0
+```
