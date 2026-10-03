@@ -8,7 +8,7 @@ import io
 import json
 import struct as _struct
 from contextlib import redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -43,9 +43,20 @@ def cases_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _syslog(path: Path) -> Path:
+    # Timestamps are relative to now: the correlate scoring under test has a
+    # 1h cross-source temporal window and a 24h recency window, both measured
+    # against the finding creation time. Hardcoded wall-clock timestamps made
+    # these tests time-bombs (score 40 -> 30 once the hour lapsed).
+    now = datetime.now(timezone.utc)
+    t1 = now - timedelta(minutes=30)
+    t2 = now - timedelta(minutes=29)
+
+    def _fmt(t: datetime) -> str:
+        return f"{t:%b} {t.day:2d} {t:%H:%M:%S}"
+
     path.write_text(
-        "Oct  3 02:10:01 web sshd[1]: Failed password for root from 203.0.113.7\n"
-        "Oct  3 02:11:05 web sshd[2]: Failed password for admin from 203.0.113.7\n",
+        f"{_fmt(t1)} web sshd[1]: Failed password for root from 203.0.113.7\n"
+        f"{_fmt(t2)} web sshd[2]: Failed password for admin from 203.0.113.7\n",
         encoding="utf-8",
     )
     return path
