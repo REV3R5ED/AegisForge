@@ -49,6 +49,10 @@ DEFAULTS: dict[str, Any] = {
     "pcap_burst_threshold": 50,
     "pcap_unusual_port_packets": 10,
     "pcap_top_n": 10,
+    "intel_providers": ["local-blocklist"],
+    "intel_cache_ttl": 86400,
+    "intel_rate_limit": 5.0,
+    "intel_blocklist": "",
 }
 
 _PROFILE_DEFAULT = "default"

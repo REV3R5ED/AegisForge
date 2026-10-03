@@ -5,6 +5,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-03
+
+### Added
+
+- Threat-intel enrichment (`intel/`, v0.8): provider-neutral interface.
+  Indicator normalization first (lowercased domains, refanged defang
+  forms, URL host extraction, validated md5/sha1/sha256 hashes);
+  invalid input is rejected with a reason, never silently kept.
+- `IntelProvider` ABC (`name`, `supported_types`, `lookup`,
+  `configure`) with a name registry. Built-in providers, all stdlib and
+  opt-in: `local-blocklist` (user-supplied CSV, works offline),
+  `team-cymru` (DNS-based ASN ownership — verdict always "unknown",
+  ownership is not reputation), `dns-resolve` (forward resolution,
+  labeled "currently resolves to"), and `http-reputation-stub` (a
+  clearly labeled stub showing the interface; API keys come from
+  environment variables only, never config files).
+- Network providers run only when configured AND the user passes
+  `--enrich`; `intel lookup` prints a one-line notice naming every
+  network provider contacted. Without `--enrich` the tool is fully
+  offline (blocklist + cache).
+- `IntelRecord` verdict vocabulary strictly enforced in code:
+  `unknown` / `clean` / `suspicious` / `malicious` / `no-verdict`
+  ("provider did not return a verdict"). `malicious` verdicts become
+  high findings with observed-vs-inferred reasoning.
+- SQLite cache (TTL 24h default, `intel cache-clear`), per-provider
+  token-bucket rate limits (lookups beyond budget are skipped with a
+  clear message, never hammering).
+- `intel correlate --case CASE-ID [--pcap FILE]`: enriches case and
+  pcap indicators and combines verdicts — conflicting provider
+  verdicts are reported as "conflicting", never averaged.
+- New config knobs: `intel_providers`, `intel_cache_ttl`,
+  `intel_rate_limit`, `intel_blocklist`.
+
 ## [0.7.0] - 2026-10-03
 
 ### Added

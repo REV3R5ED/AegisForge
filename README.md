@@ -16,12 +16,13 @@ In v0.2 there is **no lockout** — the licensing seam is in place
 (`aegisforge/core/license.py`) and commercial enforcement activates in a
 later release.
 
-## What v0.7 does
+## What v0.8 does
 
 Core + Network Discovery + authorized port/service analysis + domain
 investigation + **log analysis** + **digital forensics** (v0.4, shipped
 right after v0.5 per the master plan's numbering) + **incident-response
-engine** (case management) + **offline PCAP analysis**:
+engine** (case management) + **offline PCAP analysis** +
+**threat-intel enrichment**:
 
 | Command | What it does |
 |---|---|
@@ -63,6 +64,10 @@ engine** (case management) + **offline PCAP analysis**:
 | `aegisforge pcap tls FILE [--top N]` | TLS ClientHello SNI + offered version on TCP/443 (metadata only) |
 | `aegisforge pcap indicators FILE` | Deduped observed indicators (IPs, domains, URLs) with first/last seen — observed, never a verdict |
 | `aegisforge pcap timeline FILE` | Timestamped flow-start and DNS-query events feeding the core event model |
+| `aegisforge intel lookup INDICATOR [--provider NAME] [--enrich]` | Normalize one indicator (IP/domain/URL/hash, defang-aware) and query configured providers; network providers run only with `--enrich` |
+| `aegisforge intel correlate --case CASE-ID [--pcap FILE] [--enrich]` | Enrich case + pcap indicators and combine provider verdicts (conflicts reported, never averaged) |
+| `aegisforge intel providers` | List registered providers: network/local, supported types, configured state |
+| `aegisforge intel cache-clear` | Clear the local SQLite intel cache |
 | `aegisforge config show` | Show effective configuration |
 
 ### Investigation safety: passive lookups, no consent gate

@@ -372,3 +372,62 @@ event model, and a capture summary attaches to a case like any other
 network evidence: `case attach CASE-2026-001 --kind network --source
 capture.pcap` copies it into the case with a SHA-256, so the timeline
 in the case report can draw on packet evidence too.
+
+## What's next — v0.8: threat-intel enrichment
+
+> **Scenario continues:** the case has indicators — an IP from the
+> PCAP, a domain from a phishing email. Before you send anything to
+> anyone, you normalize: defanged `hxxp://evil[.]example[.]com/login`
+> becomes a proper URL, domains are lowercased, hashes validated.
+> Then you enrich — against your own blocklist first, because that
+> never leaves the machine.
+
+```console
+$ aegisforge intel lookup 203.0.113.7
+203.0.113.7 (ip): 1 record(s); verdicts: malicious
+
+Indicator: 203.0.113.7 (ip)
+
+PROVIDER              VERDICT       CONF  DETAIL
+local-blocklist       malicious     90    blocklisted by IR-Blocklist: brute-force source from firewall feed
+
+$ aegisforge intel lookup hxxp://evil[.]example[.]com/login
+evil.example.com (url): 1 record(s); verdicts: malicious
+
+Indicator: evil.example.com (url)
+  (input was defanged; refanged before lookup)
+
+PROVIDER              VERDICT       CONF  DETAIL
+local-blocklist       malicious     75    blocklisted by IR-Blocklist: phishing domain from takedown feed
+
+$ aegisforge intel correlate --case CASE-2026-001
+CASE-2026-001: 2 indicator(s) correlated, 2 malicious, 0 conflicting
+
+INDICATOR                               TYPE    VERDICT     PROVIDERS / EVIDENCE
+203.0.113.7                             ip      malicious   local-blocklist
+                                                            <- case:CASE-2026-001-F01
+evil.example.com                        domain  malicious   local-blocklist
+                                                            <- case:CASE-2026-001-F01
+```
+
+![Threat-intel lookup and correlation: blocklist verdicts, defang handling, combined case verdicts](images/09-intel-lookup.png)
+
+Two rules govern enrichment. **Normalize first:** every indicator is
+canonicalized before any provider sees it — defanged forms refanged
+and labeled, URL hosts extracted, hashes validated by length — and
+anything unrecognizable is rejected with a reason, never silently
+kept. **Network providers are opt-in:** `local-blocklist` works fully
+offline, but `team-cymru` (ASN ownership via DNS) and `dns-resolve`
+only run with `--enrich`, and `intel lookup` prints a one-line notice
+naming every network provider it contacts — indicators sent to a
+provider leave your machine, and the tool says so.
+
+Provider verdicts come from a vocabulary enforced in code —
+`unknown`, `clean`, `suspicious`, `malicious`, or "provider did not
+return a verdict" — nothing else. A `malicious` verdict becomes a
+high finding with the usual observed-vs-inferred split, and
+`intel correlate` combines providers per indicator: disagreeing
+verdicts surface as "conflicting", never averaged. Answers are cached
+in SQLite (24h default) behind per-provider rate limits, and the
+`http-reputation-stub` provider documents how to plug in a real API —
+keys from environment variables only, never config files.

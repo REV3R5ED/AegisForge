@@ -10,7 +10,7 @@ Later phases (forensics, PCAP, intel, correlation, cases,
 reporting) plug into the core models defined here.
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __author__ = "Pouya Shini Karim"
 
 from aegisforge.core import (
