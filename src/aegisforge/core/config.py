@@ -45,6 +45,10 @@ DEFAULTS: dict[str, Any] = {
     "logs_burst_window": 60,
     "logs_burst_threshold": 50,
     "logs_context_lines": 3,
+    "pcap_burst_window": 60,
+    "pcap_burst_threshold": 50,
+    "pcap_unusual_port_packets": 10,
+    "pcap_top_n": 10,
 }
 
 _PROFILE_DEFAULT = "default"

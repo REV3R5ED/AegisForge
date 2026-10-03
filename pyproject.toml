@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aegisforge"
-version = "0.6.0"
-description = "AegisForge — modular defensive-security and DFIR platform (core, network discovery, port/service analysis, domain investigation, log analysis)"
+version = "0.7.0"
+description = "AegisForge — modular defensive-security and DFIR platform (core, network discovery, port/service analysis, domain investigation, log analysis, digital forensics, incident-response engine, offline PCAP analysis)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Proprietary — 1-week free trial, commercial license required thereafter. See LICENSE."}

@@ -289,3 +289,86 @@ closing `--note`, so the resolution is always on the record.
 evidence manifest, timeline (JSON + CSV), findings, notes — plus a
 report manifest with the SHA-256 of every artifact, so anyone can
 verify the bundle hasn't changed since it was generated.
+
+## What's next — v0.7: offline PCAP analysis
+
+> **Scenario continues:** the case has a packet capture from the web
+> server's span port. You never had to be on the wire live — the
+> capture was taken during the incident window, and AegisForge reads
+> it offline, one packet at a time, without loading it into memory.
+
+```console
+$ aegisforge pcap summary capture.pcap
+capture.pcap: 18 packet(s), 1203 bytes, 1 finding(s), 0 warning(s)
+
+Packets: 18  Bytes: 1203  Range: 2023-11-14T22:13:20.000000Z .. 2023-11-14T22:13:37.000000Z
+
+Protocols:
+  eth   18
+  ipv4  18
+  tcp   16
+  udp   2
+
+Top talkers (packets):
+  192.168.1.10   18
+  10.0.0.5       12
+
+Top ports:
+  31337  12
+  52001  3
+  80     3
+
+Unusual ports (observed — not a verdict):
+  tcp/31337: 12 packets
+
+Findings:
+  [medium] Unusual port activity (confidence 60)
+    OBSERVED: 12 packets on tcp/31337, which is not in the common-ports
+    set. INFERRED: may indicate a non-standard service or tunneling —
+    investigate the endpoints before drawing conclusions.
+
+$ aegisforge pcap conversations capture.pcap --top 3
+SOURCE                DEST                  PROTO SPORT  DPORT  PKTS   BYTES    DURATION
+192.168.1.10          93.184.216.34         tcp   52001  80     2      179      1.0s
+93.184.216.34         192.168.1.10          tcp   80     52001  1      92       0.0s
+192.168.1.10          192.168.1.1           udp   53001  53     1      71       0.0s
+
+$ aegisforge pcap dns capture.pcap
+NAME                                    QTYPE   Q     RESP  NXDOMAIN
+example.com                             A       1     1     0
+
+$ aegisforge pcap indicators capture.pcap
+Observed in capture (not a verdict):
+TYPE    VALUE                                       FIRST SEEN
+domain  example.com                                 2023-11-14T22:13:21.000000Z
+ip      10.0.0.5                                    2023-11-14T22:13:26.000000Z
+ip      192.168.1.10                                2023-11-14T22:13:20.000000Z
+url     example.com/index.html                      2023-11-14T22:13:21.000000Z
+```
+
+![PCAP summary showing protocol stats, top talkers, unusual ports and an observed-vs-inferred finding](images/08-pcap-summary.png)
+
+The reader is stdlib-only and streaming: classic pcap in all four
+magic variants (big/little-endian × micro/nanosecond), Ethernet and
+Linux-cooked link layers, IPv4/IPv6, TCP, UDP and ICMP/ICMPv6 headers.
+pcapng is detected and refused with a clean error — it is out of scope
+for v0.7 — and truncated tails become warnings, never crashes. No
+payload reassembly is ever performed: payload lengths are recorded,
+never contents, and HTTP records are truncated to 200 characters, so
+bodies never land in output.
+
+`pcap dns` reuses the v0.3 stdlib DNS wire parser (compression-pointer
+loops and all) to pull queries, qtypes and answer counts from UDP/53;
+`pcap http` extracts request lines, Host headers and status codes from
+TCP/80; `pcap tls` recovers the ClientHello SNI and offered version
+from TCP/443. `pcap indicators` dedupes everything observed — IPs,
+domains from DNS answers, HTTP Host headers and TLS SNI, URLs from
+host+path — with first/last seen timestamps. Every indicator is
+labeled "observed in capture": observation, never a verdict. Verdicts
+are threat intel's job (v0.8).
+
+`pcap timeline` emits flow-start and DNS-query events into the core
+event model, and a capture summary attaches to a case like any other
+network evidence: `case attach CASE-2026-001 --kind network --source
+capture.pcap` copies it into the case with a SHA-256, so the timeline
+in the case report can draw on packet evidence too.

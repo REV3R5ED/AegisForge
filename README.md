@@ -16,12 +16,12 @@ In v0.2 there is **no lockout** — the licensing seam is in place
 (`aegisforge/core/license.py`) and commercial enforcement activates in a
 later release.
 
-## What v0.6 does
+## What v0.7 does
 
 Core + Network Discovery + authorized port/service analysis + domain
 investigation + **log analysis** + **digital forensics** (v0.4, shipped
 right after v0.5 per the master plan's numbering) + **incident-response
-engine** (case management):
+engine** (case management) + **offline PCAP analysis**:
 
 | Command | What it does |
 |---|---|
@@ -56,6 +56,13 @@ engine** (case management):
 | `aegisforge case note CASE-ID "text"` | Append an analyst note (append-only) |
 | `aegisforge case report CASE-ID --output DIR [--force]` | Reproducible report bundle with per-artifact SHA-256 manifest |
 | `aegisforge case status CASE-ID [open\|in-progress\|closed]` | Show/change case status (closing requires `--note`) |
+| `aegisforge pcap summary FILE` | Protocol stats, top talkers (packets/bytes), top ports, unusual ports, observed-vs-inferred findings |
+| `aegisforge pcap conversations FILE [--top N]` | 5-tuple flow summaries: packet/byte counts, duration, TCP flags seen |
+| `aegisforge pcap dns FILE [--top N]` | DNS queries/responses on UDP/53 (stdlib wire parsing); malformed counted, never fatal |
+| `aegisforge pcap http FILE [--top N]` | HTTP request lines + Host headers + status codes on TCP/80 (truncated, never bodies) |
+| `aegisforge pcap tls FILE [--top N]` | TLS ClientHello SNI + offered version on TCP/443 (metadata only) |
+| `aegisforge pcap indicators FILE` | Deduped observed indicators (IPs, domains, URLs) with first/last seen — observed, never a verdict |
+| `aegisforge pcap timeline FILE` | Timestamped flow-start and DNS-query events feeding the core event model |
 | `aegisforge config show` | Show effective configuration |
 
 ### Investigation safety: passive lookups, no consent gate
@@ -347,11 +354,16 @@ overrides:
 
 ## Architecture (built for the roadmap)
 
-```
+```text
 aegisforge/
   core/        config, events, findings, evidence, plugins, logging, results, license
   network/     subnet, ping, dns, trace, interfaces, inventory,
                scanner, services, tls, http, baselines
+  domain/      dns_client, records, nameservers, mx, dnssec, rdap, whois, asn, web
+  logs/        parsers, detect, filters, analyze, redact
+  forensics/   inventory, hashing, identify, manifest, duplicates, timeline
+  cases/       store, evidence, timeline, findings, indicators, report
+  pcap/        reader, decoders, dns_extract, http_extract, tls_extract, analyze
   cli/         argparse surface, human/JSON/CSV rendering
 ```
 

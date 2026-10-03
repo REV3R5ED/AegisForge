@@ -5,6 +5,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-03
+
+### Added
+
+- Offline PCAP analysis (`pcap/`, v0.7): stdlib-only streaming reader
+  for classic pcap (all four magic variants; pcapng refused with a
+  clean error), Ethernet + Linux-cooked link layers, IPv4/IPv6, TCP,
+  UDP, ICMP/ICMPv6 header decoders. No payload reassembly — payload
+  lengths recorded, never contents.
+- `aegisforge pcap summary FILE`: packet count, bytes, time range,
+  protocol histogram, top talkers (packets/bytes), top ports, unusual
+  ports (labeled "unusual", never "malicious"), plus observed-vs-
+  inferred findings for unusual-port activity and connection-frequency
+  bursts (configurable thresholds).
+- `aegisforge pcap conversations FILE [--top N]`: 5-tuple flows with
+  packet/byte counts, duration and TCP flags seen.
+- `aegisforge pcap dns FILE [--top N]`: DNS queries/responses on
+  UDP/53 via the v0.3 stdlib wire parser; malformed messages counted,
+  never fatal.
+- `aegisforge pcap http FILE [--top N]`: HTTP request lines, Host
+  headers, User-Agent and status codes on TCP/80 — truncated to 200
+  chars, bodies never read.
+- `aegisforge pcap tls FILE [--top N]`: TLS ClientHello SNI + offered
+  version on TCP/443 (metadata only; handshake failures counted).
+- `aegisforge pcap indicators FILE`: deduped observed indicators —
+  IPs, domains (DNS/HTTP Host/SNI), URLs — with first/last seen and
+  sources. Every indicator is labeled "observed in capture", never a
+  verdict (verdicts are threat intel's job, v0.8).
+- `aegisforge pcap timeline FILE`: flow-start and DNS-query events
+  feeding the core event model; attach capture summaries to cases
+  with `case attach --kind network` (documented in the usage guide).
+- New config knobs: `pcap_burst_window`, `pcap_burst_threshold`,
+  `pcap_unusual_port_packets`, `pcap_top_n`.
+
 ## [0.6.0] - 2026-10-03
 
 ### Added
