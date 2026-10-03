@@ -53,6 +53,9 @@ DEFAULTS: dict[str, Any] = {
     "intel_cache_ttl": 86400,
     "intel_rate_limit": 5.0,
     "intel_blocklist": "",
+    "correlate_window_seconds": 3600,
+    "correlate_min_sources": 2,
+    "correlate_pivot_threshold": 70,
 }
 
 _PROFILE_DEFAULT = "default"

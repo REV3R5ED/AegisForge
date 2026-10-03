@@ -16,13 +16,13 @@ In v0.2 there is **no lockout** — the licensing seam is in place
 (`aegisforge/core/license.py`) and commercial enforcement activates in a
 later release.
 
-## What v0.8 does
+## What v0.9 does
 
 Core + Network Discovery + authorized port/service analysis + domain
 investigation + **log analysis** + **digital forensics** (v0.4, shipped
 right after v0.5 per the master plan's numbering) + **incident-response
 engine** (case management) + **offline PCAP analysis** +
-**threat-intel enrichment**:
+**threat-intel enrichment** + **correlation engine**:
 
 | Command | What it does |
 |---|---|
@@ -68,6 +68,9 @@ engine** (case management) + **offline PCAP analysis** +
 | `aegisforge intel correlate --case CASE-ID [--pcap FILE] [--enrich]` | Enrich case + pcap indicators and combine provider verdicts (conflicts reported, never averaged) |
 | `aegisforge intel providers` | List registered providers: network/local, supported types, configured state |
 | `aegisforge intel cache-clear` | Clear the local SQLite intel cache |
+| `aegisforge correlate run --case CASE-ID [--window 1h] [--min-sources 2] [--explain]` | Correlate a case: normalized entities, pivots, temporal links, explainable scores |
+| `aegisforge correlate entities --case CASE-ID` | List every normalized entity in a case with source counts |
+| `aegisforge correlate timeline --case CASE-ID` | Incident timeline: case events merged with pivot points |
 | `aegisforge config show` | Show effective configuration |
 
 ### Investigation safety: passive lookups, no consent gate
@@ -215,6 +218,41 @@ connection carries a timeout, retries are bounded, and banner reads
 are size-capped. No `shell=True` anywhere; all targets and port
 specs are validated before any packet is sent.
 
+### Correlation: entity pivots, honest arithmetic
+
+`correlate run` answers one question: **which entities show up in more
+than one kind of evidence?** It normalizes everything (IPs to canonical
+form, domains lowercased, `DOMAIN\user` → `user@domain`, hashes to
+lowercase hex, hostnames lowercased) and builds an in-memory entity
+graph over the case's log events, pcap indicators, intel records and
+findings. An entity observed in ≥2 source types becomes a **pivot** —
+for example the IP `203.0.113.7` appearing in both auth logs and a
+linked finding, with a blocklist hit on top.
+
+Every pivot carries an explainable 0–100 score — plain addition,
+never ML:
+
+```text
+score = min(100, sources + verdict + temporal + recency)
+  sources:  +10 per distinct source type (cap +40)
+  verdict:  +20 intel 'malicious' / +10 'suspicious'
+  temporal: +10 when cross-source observations fall within the window
+  recency:  +10 when the latest observation is within 24h
+```
+
+`--explain` prints the full breakdown per pivot, and the formula is
+printed with every run. Temporal links say "observed within 1h of each
+other" — correlation **never claims causation**. A pivot with no
+evidence is impossible by construction: every edge and pivot lists its
+evidence (source type, evidence ID, timestamp). High-confidence pivots
+(score ≥ `correlate_pivot_threshold`, default 70) become findings under
+the usual observed-vs-inferred discipline. Correlation is read-only: it
+never modifies the case store.
+
+`correlate timeline` merges the case timeline with pivot events:
+chronological, pivot points highlighted (`>>>`), every entry
+evidence-backed.
+
 Every command emits human-readable output by default, `--json` and
 `--csv` for automation, and structured exit codes:
 
@@ -353,9 +391,17 @@ overrides:
   "profiles": {
     "default": {"ping_count": 3, "ping_timeout": 2.0, "max_parallel": 20},
     "quick": {"ping_count": 1, "ping_timeout": 1.0}
-  }
+  },
+  "correlate_window_seconds": 3600,
+  "correlate_min_sources": 2,
+  "correlate_pivot_threshold": 70
 }
 ```
+
+`correlate_window_seconds` is the default `--window` (seconds, also
+accepts `30s`/`5m`/`2h`/`1d` on the flag), `correlate_min_sources` the
+default `--min-sources`, and `correlate_pivot_threshold` the score at
+or above which a pivot becomes a finding.
 
 ## Architecture (built for the roadmap)
 
@@ -369,6 +415,8 @@ aegisforge/
   forensics/   inventory, hashing, identify, manifest, duplicates, timeline
   cases/       store, evidence, timeline, findings, indicators, report
   pcap/        reader, decoders, dns_extract, http_extract, tls_extract, analyze
+  intel/       normalize, providers, cache, engine
+  correlate/   entities, extract, graph, scoring, timeline, engine
   cli/         argparse surface, human/JSON/CSV rendering
 ```
 

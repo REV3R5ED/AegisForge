@@ -5,6 +5,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-03
+
+### Added
+
+- Correlation engine (`correlate/`, v0.9): entity normalization, an
+  in-memory entity graph, cross-source pivot detection, temporal
+  correlation, explainable scoring, and incident timelines.
+- Entity normalization (`correlate/entities.py`): canonical forms for
+  IPs (v4/v6), domains (lowercase, trailing-dot strip), users
+  (`DOMAIN\user` → `user@domain`), hashes (lowercase hex, kind by
+  length), and hostnames. Reuses `intel/normalize.py` for the shared
+  types instead of duplicating it.
+- `correlate run --case CASE-ID [--window 1h] [--min-sources 2]
+  [--explain]`: builds the entity graph from a case's log events,
+  pcap indicators, intel records and findings; the same entity in ≥2
+  source types becomes a **pivot**. Pivots rank by distinct source
+  count, recency, and intel verdict. High-confidence pivots
+  (score ≥ `correlate_pivot_threshold`, default 70) become findings
+  under the observed-vs-inferred discipline. Read-only over the case
+  store — cases and evidence are never modified.
+- Explainable 0–100 pivot scores, plain addition, never ML:
+  `score = min(100, sources + verdict + temporal + recency)` where
+  sources is +10 per distinct source type (cap +40), verdict is +20
+  `malicious` / +10 `suspicious`, temporal is +10 when cross-source
+  observations fall within `--window`, and recency is +10 when the
+  latest observation is within 24h. `--explain` prints the full
+  per-pivot breakdown; the formula is documented in the README and
+  printed with every run.
+- Temporal correlation: entities observed within the configurable
+  window across sources are "temporally linked"; output says
+  "observed within X of each other" and never claims causation.
+- Evidence-backed relationships by construction: every edge and pivot
+  lists its evidence (source type, evidence ID, timestamp), enforced
+  in the model layer (`Pivot`/`Edge` reject empty evidence).
+  Conflicting intel verdicts are reported as "conflicting", never
+  averaged; skipped records are ignored.
+- `correlate entities --case CASE-ID`: list all normalized entities
+  with observation and source counts.
+- `correlate timeline --case CASE-ID`: incident timeline merging the
+  case timeline with pivot events — chronological, pivot points
+  highlighted, every entry evidence-backed.
+- New config knobs: `correlate_window_seconds` (default 3600),
+  `correlate_min_sources` (default 2), `correlate_pivot_threshold`
+  (default 70).
+
 ## [0.8.0] - 2026-10-03
 
 ### Added

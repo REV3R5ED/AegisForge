@@ -431,3 +431,57 @@ verdicts surface as "conflicting", never averaged. Answers are cached
 in SQLite (24h default) behind per-provider rate limits, and the
 `http-reputation-stub` provider documents how to plug in a real API —
 keys from environment variables only, never config files.
+
+## What's next — v0.9: the correlation engine
+
+> **Scenario continues:** the case now holds three kinds of evidence —
+> the auth log with the brute-force attempts, the finding you recorded
+> with the attacker's IP linked, and your blocklist verdict. The
+> question isn't "what did each source say?" anymore; it's "what shows
+> up in *more than one* source?" That's a pivot, and `correlate run`
+> finds it.
+
+```console
+$ aegisforge correlate run --case CASE-2026-001 --explain
+CASE-2026-001: 1 pivot(s) from 6 entities (12 co-occurrence edges)
+
+Pivots (1):
+  [ 60] ip:203.0.113.7 (2 sources: findings, logs)  verdict: malicious
+         +20: 2 distinct source types (findings, logs)
+         +20: intel verdict 'malicious' (+20)
+         +10: 3 cross-source observation pair(s) within 1h
+         +10: latest observation within the last 24h
+         <- logs:auth.log [CASE-2026-001-E01]
+         <- findings:CASE-2026-001-F01 [CASE-2026-001-F01]
+
+Score formula:
+  score = min(100, sources + verdict + temporal + recency); sources = 10 per distinct source type (cap 40); verdict = +20 malicious / +10 suspicious; temporal = +10 when cross-source observations fall within the window; recency = +10 when the latest observation is within 24h. Scores describe observation strength, never causation.
+
+Entities: 6, co-occurrence edges: 12, window: 3600s, min-sources: 2
+
+$ aegisforge correlate timeline --case CASE-2026-001
+CASE-2026-001: 5 timed entr(ies), 0 untimed, 1 pivot(s) highlighted
+
+>>> 2026-10-03T02:10:01Z         [correlation] >>> pivot: ip:203.0.113.7 observed in 2 sources (findings, logs) — score 60
+         <- logs:auth.log [CASE-2026-001-E01]
+         <- findings:CASE-2026-001-F01 [CASE-2026-001-F01]
+    2026-10-03T02:10:01Z         [logs:auth.log] Failed password for root from 203.0.113.7 port 51234 ssh2
+    2026-10-03T02:10:04Z         [logs:auth.log] Failed password for root from 203.0.113.7 port 51240 ssh2
+    2026-10-03T02:11:05Z         [logs:auth.log] Failed password for admin from 203.0.113.7 port 52210 ssh2
+```
+
+![Correlation run with score explanation: the brute-force IP pivots across logs and findings with a malicious blocklist verdict](images/10-correlate-run.png)
+
+Three disciplines keep correlation honest. **Normalize first:**
+`203.0.113.7` written three different ways is one entity; so is
+`CORP\jdoe` vs `jdoe@corp`. **Evidence or it didn't happen:** a pivot
+with no evidence is impossible by construction — every edge and pivot
+lists its source type, evidence ID and timestamp, enforced in the
+model layer. **Scores are arithmetic, never vibes:** the breakdown
+above is the whole formula, printed with `--explain` and documented
+in the README; temporal links say "observed within 1h of each other"
+and the tool never claims one event caused another.
+
+Pivots scoring at or above `correlate_pivot_threshold` (default 70)
+become findings under the usual observed-vs-inferred split, and
+correlation is strictly read-only — it never touches the case store.
