@@ -16,11 +16,12 @@ In v0.2 there is **no lockout** — the licensing seam is in place
 (`aegisforge/core/license.py`) and commercial enforcement activates in a
 later release.
 
-## What v0.5 does
+## What v0.6 does
 
 Core + Network Discovery + authorized port/service analysis + domain
 investigation + **log analysis** + **digital forensics** (v0.4, shipped
-right after v0.5 per the master plan's numbering):
+right after v0.5 per the master plan's numbering) + **incident-response
+engine** (case management):
 
 | Command | What it does |
 |---|---|
@@ -45,6 +46,16 @@ right after v0.5 per the master plan's numbering):
 | `aegisforge forensics verify --manifest MANIFEST.json [--root PATH]` | Re-hash the live tree; report changed / missing / new files as observed-vs-inferred findings |
 | `aegisforge forensics duplicates PATH` | Group files with identical SHA-256 content |
 | `aegisforge forensics timeline PATH` | Chronological filesystem timestamps (mtime/atime/ctime) — filesystem metadata, not content claims |
+| `aegisforge case create --title "..." [--note "..."]` | Create an incident case (`CASE-2026-001`-style ID, year + persisted sequence) with evidence/timeline/findings/report folders |
+| `aegisforge case list` / `aegisforge case show CASE-ID` | List all cases / show case metadata, evidence, findings |
+| `aegisforge case attach CASE-ID --kind [network\|logs\|files] --source PATH` | Copy (never move) a file into the case evidence folder; SHA-256 recorded; sources untouched |
+| `aegisforge case timeline CASE-ID` | Unified chronological timeline across log/file/network evidence (untimed events listed separately, never dropped) |
+| `aegisforge case finding CASE-ID --title --severity --confidence --detail` | Record a finding (`CASE-2026-001-F01`-style ID) with lifecycle status |
+| `aegisforge case findings CASE-ID [--status ...]` | List tracked findings, optionally filtered by lifecycle state |
+| `aegisforge case link CASE-ID --finding F-ID --indicator VALUE [--type ...]` | Link an indicator; type guessed from shape unless specified (recorded either way) |
+| `aegisforge case note CASE-ID "text"` | Append an analyst note (append-only) |
+| `aegisforge case report CASE-ID --output DIR [--force]` | Reproducible report bundle with per-artifact SHA-256 manifest |
+| `aegisforge case status CASE-ID [open\|in-progress\|closed]` | Show/change case status (closing requires `--note`) |
 | `aegisforge config show` | Show effective configuration |
 
 ### Investigation safety: passive lookups, no consent gate

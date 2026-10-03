@@ -1,5 +1,6 @@
 """AegisForge CLI: ``aegisforge network ...`` / ``aegisforge domain ...`` /
-``aegisforge logs ...`` / ``aegisforge forensics ...``.
+``aegisforge logs ...`` / ``aegisforge forensics ...`` /
+``aegisforge case ...``.
 
 Every command returns a shared result envelope, renders human-readable
 text by default (``--json`` / ``--csv`` for automation), uses structured
@@ -29,6 +30,15 @@ magic-byte identification, single-pass multi-algorithm hashing,
 sealed evidence manifests, manifest verification
 (changed/missing/new), duplicate detection and filesystem timelines.
 Numbered v0.4 per the master plan; it shipped after v0.5.
+
+v0.6 adds the incident-response engine (``case create``, ``case
+attach``, ``case timeline``, ``case finding``/``case findings``,
+``case link``, ``case note``, ``case report``, ``case status``):
+case folders with copied (never moved) hashed evidence, a unified
+chronological timeline across log/file/network evidence, finding
+tracking with lifecycle states, indicator linking with
+guessed-vs-specified types, append-only analyst notes and
+reproducible report bundles with per-artifact SHA-256 manifests.
 """
 
 from __future__ import annotations
@@ -43,6 +53,12 @@ from collections.abc import Sequence
 from typing import Any
 
 from aegisforge import __version__
+from aegisforge.cases import evidence as cases_evidence_mod
+from aegisforge.cases import findings as cases_findings_mod
+from aegisforge.cases import report as cases_report_mod
+from aegisforge.cases import store as cases_store_mod
+from aegisforge.cases import timeline as cases_timeline_mod
+from aegisforge.cases.store import CaseError
 from aegisforge.core import config as config_mod
 from aegisforge.core.config import AppConfig, ConfigError
 from aegisforge.core.events import Event
@@ -959,6 +975,293 @@ def cmd_forensics_timeline(args: argparse.Namespace, cfg: AppConfig) -> Result:
 
 
 # ---------------------------------------------------------------------------
+# Case management (v0.6) — incident-response engine
+# ---------------------------------------------------------------------------
+
+
+def _case_or_fail(result: Result, case_id: str) -> Any | None:
+    try:
+        return cases_store_mod.load_case(case_id)
+    except CaseError as exc:
+        result.fail(str(exc))
+        return None
+
+
+def _case_event(event_type: str, case_id: str, evidence: dict[str, Any]) -> Event:
+    return Event(
+        event_type=event_type,
+        source="aegisforge",
+        evidence={"case_id": case_id, **evidence},
+    )
+
+
+def cmd_case_create(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="case create")
+    try:
+        case = cases_store_mod.create_case(args.title, note=args.note)
+    except CaseError as exc:
+        result.fail(str(exc))
+        return result
+    result.target = case.case_id
+    result.data = case.to_dict()
+    result.summary = f"case {case.case_id} created: {case.title}"
+    result.add_event(_case_event("case.created", case.case_id, {"title": case.title}))
+    return result
+
+
+def cmd_case_list(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="case list")
+    cases = cases_store_mod.list_cases()
+    result.data = {
+        "cases": [
+            {
+                "case_id": c.case_id,
+                "title": c.title,
+                "status": c.status,
+                "created": c.created,
+                "evidence": len(c.evidence),
+                "findings": len(c.findings),
+                "notes": len(c.notes),
+            }
+            for c in cases
+        ],
+        "count": len(cases),
+    }
+    result.summary = f"{len(cases)} case(s)"
+    return result
+
+
+def cmd_case_show(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="case show", target=args.case_id)
+    case = _case_or_fail(result, args.case_id)
+    if case is None:
+        return result
+    result.data = case.to_dict()
+    result.summary = (
+        f"{case.case_id}: {case.title} [{case.status}] — "
+        f"{len(case.evidence)} evidence, {len(case.findings)} findings, "
+        f"{len(case.notes)} notes"
+    )
+    return result
+
+
+def cmd_case_attach(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="case attach", target=args.case_id)
+    case = _case_or_fail(result, args.case_id)
+    if case is None:
+        return result
+    try:
+        record = cases_evidence_mod.attach_evidence(case, args.kind, args.source)
+    except CaseError as exc:
+        result.fail(str(exc))
+        return result
+    result.data = record.to_dict()
+    result.summary = (
+        f"attached {args.source} to {case.case_id} as "
+        f"{record.evidence_id} (sha256 {record.sha256[:16]}…)"
+    )
+    result.add_event(
+        _case_event(
+            "case.evidence.attached",
+            case.case_id,
+            {
+                "evidence_id": record.evidence_id,
+                "kind": record.kind,
+                "sha256": record.sha256,
+            },
+        )
+    )
+    return result
+
+
+def cmd_case_timeline(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="case timeline", target=args.case_id)
+    case = _case_or_fail(result, args.case_id)
+    if case is None:
+        return result
+    timed, untimed = cases_timeline_mod.build_case_timeline(case)
+    if args.limit is not None and args.limit >= 0:
+        timed = timed[: args.limit]
+    result.data = {
+        "case_id": case.case_id,
+        "timeline_entries": [e.to_dict() for e in timed],
+        "untimed": [e.to_dict() for e in untimed],
+        "timed_count": len(timed),
+        "untimed_count": len(untimed),
+        "note": "Filesystem timestamps are filesystem metadata claims, not "
+        "content claims. Untimed events are listed separately, never dropped.",
+    }
+    result.summary = (
+        f"{case.case_id}: {len(timed)} timed event(s), {len(untimed)} untimed event(s)"
+    )
+    result.add_event(
+        _case_event(
+            "case.timeline.built",
+            case.case_id,
+            {"timed": len(timed), "untimed": len(untimed)},
+        )
+    )
+    return result
+
+
+def cmd_case_finding(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="case finding", target=args.case_id)
+    case = _case_or_fail(result, args.case_id)
+    if case is None:
+        return result
+    try:
+        finding = cases_findings_mod.add_case_finding(
+            case,
+            title=args.title,
+            severity=args.severity,
+            confidence=args.confidence,
+            detail=args.detail or "",
+        )
+        cases_store_mod.save_case(case)
+    except CaseError as exc:
+        result.fail(str(exc))
+        return result
+    result.data = finding.to_dict()
+    result.summary = (
+        f"finding {finding.finding_id} recorded in {case.case_id}: "
+        f"{finding.title} [{finding.severity}]"
+    )
+    result.add_finding(
+        Finding(
+            title=finding.title,
+            severity=finding.severity,
+            confidence=finding.confidence,
+            reason=finding.detail,
+            evidence=[f"case {case.case_id}", f"finding {finding.finding_id}"],
+        )
+    )
+    result.add_event(
+        _case_event(
+            "case.finding.recorded",
+            case.case_id,
+            {"finding_id": finding.finding_id, "severity": finding.severity},
+        )
+    )
+    return result
+
+
+def cmd_case_findings(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="case findings", target=args.case_id)
+    case = _case_or_fail(result, args.case_id)
+    if case is None:
+        return result
+    findings = case.findings
+    if args.status:
+        findings = [f for f in findings if f.status == args.status]
+    result.data = {
+        "case_id": case.case_id,
+        "case_findings": [f.to_dict() for f in findings],
+        "count": len(findings),
+    }
+    result.summary = f"{case.case_id}: {len(findings)} finding(s)"
+    return result
+
+
+def cmd_case_link(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="case link", target=args.case_id)
+    case = _case_or_fail(result, args.case_id)
+    if case is None:
+        return result
+    try:
+        link = cases_findings_mod.link_indicator(
+            case, args.finding, args.indicator, type_override=args.type
+        )
+        cases_store_mod.save_case(case)
+    except CaseError as exc:
+        result.fail(str(exc))
+        return result
+    result.data = link.to_dict()
+    origin = "analyst-specified" if link.type_source == "specified" else "guessed"
+    result.summary = (
+        f"linked {link.value!r} ({link.type}, type {origin}) "
+        f"to {args.finding} in {case.case_id}"
+    )
+    result.add_event(
+        _case_event(
+            "case.indicator.linked",
+            case.case_id,
+            {
+                "finding_id": args.finding,
+                "indicator": link.value,
+                "type": link.type,
+                "type_source": link.type_source,
+            },
+        )
+    )
+    return result
+
+
+def cmd_case_note(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="case note", target=args.case_id)
+    case = _case_or_fail(result, args.case_id)
+    if case is None:
+        return result
+    try:
+        note = cases_findings_mod.add_note(case, args.text)
+        cases_store_mod.save_case(case)
+    except CaseError as exc:
+        result.fail(str(exc))
+        return result
+    result.data = note.to_dict()
+    result.summary = f"note added to {case.case_id}"
+    result.add_event(_case_event("case.note.added", case.case_id, {}))
+    return result
+
+
+def cmd_case_report(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="case report", target=args.case_id)
+    case = _case_or_fail(result, args.case_id)
+    if case is None:
+        return result
+    try:
+        summary = cases_report_mod.generate_report(case, args.output, force=args.force)
+    except CaseError as exc:
+        result.fail(str(exc))
+        return result
+    result.data = summary
+    result.summary = (
+        f"report for {case.case_id} written to {summary['output']}: "
+        f"{summary['artifact_count']} artifact(s)"
+    )
+    result.add_event(
+        _case_event(
+            "case.report.generated",
+            case.case_id,
+            {"output": summary["output"], "artifacts": summary["artifact_count"]},
+        )
+    )
+    return result
+
+
+def cmd_case_status(args: argparse.Namespace, cfg: AppConfig) -> Result:
+    result = Result(command="case status", target=args.case_id)
+    case = _case_or_fail(result, args.case_id)
+    if case is None:
+        return result
+    if args.status is None:
+        result.data = {"case_id": case.case_id, "status": case.status}
+        result.summary = f"{case.case_id} status: {case.status}"
+        return result
+    try:
+        cases_findings_mod.set_case_status(case, args.status, note=args.note)
+        cases_store_mod.save_case(case)
+    except CaseError as exc:
+        result.fail(str(exc))
+        return result
+    result.data = {"case_id": case.case_id, "status": case.status}
+    result.summary = f"{case.case_id} status -> {case.status}"
+    result.add_event(
+        _case_event("case.status.changed", case.case_id, {"status": case.status})
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
 
@@ -1246,6 +1549,180 @@ def render_forensics_timeline(result: Result) -> str:
     return "\n".join(lines)
 
 
+def render_case_create(result: Result) -> str:
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    lines.append("")
+    lines.append(f"  case id:  {data.get('case_id')}")
+    lines.append(f"  title:    {data.get('title')}")
+    lines.append(f"  status:   {data.get('status')}")
+    lines.append(f"  created:  {data.get('created')}")
+    return "\n".join(lines)
+
+
+def render_case_list(result: Result) -> str:
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    cases = data.get("cases", [])
+    if cases:
+        lines.append("")
+        lines.append(f"{'CASE ID':<16}{'STATUS':<12}{'EVID':>5}{'FIND':>5}  TITLE")
+        for c in cases:
+            lines.append(
+                f"{c['case_id']:<16}{c['status']:<12}{c['evidence']:>5}"
+                f"{c['findings']:>5}  {c['title']}"
+            )
+    return "\n".join(lines)
+
+
+def render_case_show(result: Result) -> str:
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    lines.append("")
+    lines.append(f"  title:    {data.get('title')}")
+    lines.append(f"  status:   {data.get('status')}")
+    lines.append(f"  created:  {data.get('created')}")
+    evidence = data.get("evidence", [])
+    if evidence:
+        lines.append("")
+        lines.append("Evidence:")
+        for e in evidence:
+            lines.append(
+                f"  {e['evidence_id']} [{e['kind']}] {e['stored_path']} "
+                f"(sha256 {e['sha256'][:12]}…)"
+            )
+    findings = data.get("findings", [])
+    if findings:
+        lines.append("")
+        lines.append("Findings:")
+        for f in findings:
+            lines.append(
+                f"  {f['finding_id']} [{f['severity']}/{f['status']}] {f['title']}"
+            )
+    notes = data.get("notes", [])
+    if notes:
+        lines.append("")
+        lines.append(f"Notes: {len(notes)} (see --json for full text)")
+    return "\n".join(lines)
+
+
+def render_case_attach(result: Result) -> str:
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    lines.append("")
+    lines.append(f"  evidence id:  {data.get('evidence_id')}")
+    lines.append(f"  kind:         {data.get('kind')}")
+    lines.append(f"  stored as:    {data.get('stored_path')}")
+    lines.append(f"  sha256:       {data.get('sha256')}")
+    lines.append(f"  attached at:  {data.get('attached_at')} (UTC)")
+    return "\n".join(lines)
+
+
+def render_case_timeline(result: Result) -> str:
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    entries = data.get("timeline_entries", [])
+    if entries:
+        lines.append("")
+        lines.append(f"{'TIMESTAMP (UTC)':<30}{'SOURCE':<22}{'KIND':<16}SUMMARY")
+        for e in entries[:80]:
+            lines.append(
+                f"{(e.get('timestamp') or ''):<30}{e.get('source', ''):<22}"
+                f"{e.get('kind', ''):<16}{e.get('summary', '')[:60]}"
+            )
+        if len(entries) > 80:
+            lines.append(f"... and {len(entries) - 80} more (see --json)")
+    untimed = data.get("untimed", [])
+    if untimed:
+        lines.append("")
+        lines.append(
+            f"Untimed ({len(untimed)} — no parseable timestamp, listed "
+            "separately, never dropped):"
+        )
+        for e in untimed[:20]:
+            lines.append(f"  [{e.get('source')}] {e.get('summary', '')[:70]}")
+        if len(untimed) > 20:
+            lines.append(f"  ... and {len(untimed) - 20} more (see --json)")
+    lines.append("")
+    lines.append(data.get("note", ""))
+    return "\n".join(lines)
+
+
+def render_case_finding(result: Result) -> str:
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    lines.append("")
+    lines.append(f"  severity:   {data.get('severity')}")
+    lines.append(f"  confidence: {data.get('confidence')}")
+    lines.append(f"  status:     {data.get('status')}")
+    if data.get("detail"):
+        lines.append(f"  detail:     {data.get('detail')}")
+    return "\n".join(lines)
+
+
+def render_case_findings(result: Result) -> str:
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    findings = data.get("case_findings", [])
+    if findings:
+        lines.append("")
+        lines.append(f"{'FINDING ID':<22}{'SEVERITY':<10}{'STATUS':<14}TITLE")
+        for f in findings:
+            indicators = ", ".join(
+                f"{i['value']} ({i['type']})" for i in f.get("indicators", [])
+            )
+            lines.append(
+                f"{f['finding_id']:<22}{f['severity']:<10}{f['status']:<14}{f['title']}"
+            )
+            if indicators:
+                lines.append(f"  indicators: {indicators}")
+    return "\n".join(lines)
+
+
+def render_case_link(result: Result) -> str:
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    lines.append("")
+    origin = (
+        "analyst-specified"
+        if data.get("type_source") == "specified"
+        else "guessed from value shape (not a verified classification)"
+    )
+    lines.append(f"  value: {data.get('value')}")
+    lines.append(f"  type:  {data.get('type')} ({origin})")
+    return "\n".join(lines)
+
+
+def render_case_note(result: Result) -> str:
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    lines.append("")
+    lines.append(f"  [{data.get('created')}] {data.get('author')}: {data.get('text')}")
+    return "\n".join(lines)
+
+
+def render_case_report(result: Result) -> str:
+    data = result.data
+    lines = [result.summary] if result.summary else []
+    lines.append("")
+    lines.append(f"  output:   {data.get('output')}")
+    lines.append(f"  evidence: {data.get('evidence_count')} file(s)")
+    lines.append(f"  findings: {data.get('finding_count')}")
+    lines.append(f"  timeline: {data.get('timeline_entries')} entr(ies)")
+    manifest = (data.get("manifest") or {}).get("artifacts", {})
+    if manifest:
+        lines.append("")
+        lines.append("  report manifest (SHA-256 per artifact):")
+        for name, digest in manifest.items():
+            lines.append(f"    {name}: {digest[:16]}…")
+    return "\n".join(lines)
+
+
+def render_case_status(result: Result) -> str:
+    lines = [result.summary] if result.summary else []
+    return "\n".join(lines)
+
+
 def _csv_rows(result: Result) -> tuple[list[str], list[list[Any]]]:
     """Flatten the primary list in result.data to CSV rows."""
     data = result.data
@@ -1344,6 +1821,32 @@ def _csv_rows(result: Result) -> tuple[list[str], list[list[Any]]]:
             for c in data.get(key, [])
         ]
         headers = ["status", "path", "detail"]
+    elif "timeline_entries" in data:  # case timeline
+        rows = data["timeline_entries"]
+        headers = ["timestamp", "source", "kind", "summary", "detail"]
+    elif "case_findings" in data:  # case findings
+        rows = [
+            {
+                "finding_id": f.get("finding_id"),
+                "title": f.get("title"),
+                "severity": f.get("severity"),
+                "confidence": f.get("confidence"),
+                "status": f.get("status"),
+                "indicators": ";".join(
+                    f"{i.get('value')}({i.get('type')})"
+                    for i in f.get("indicators", [])
+                ),
+            }
+            for f in data["case_findings"]
+        ]
+        headers = [
+            "finding_id",
+            "title",
+            "severity",
+            "confidence",
+            "status",
+            "indicators",
+        ]
     else:
         rows = [data]
         headers = sorted(data.keys())
@@ -1389,6 +1892,22 @@ def render(result: Result, args: argparse.Namespace) -> str:
             "forensics verify": render_forensics_verify,
             "forensics duplicates": render_forensics_duplicates,
             "forensics timeline": render_forensics_timeline,
+        }.get(result.command)
+        if renderer is not None:
+            return renderer(result)
+    if result.command.startswith("case ") and not args.json and not args.csv:
+        renderer = {
+            "case create": render_case_create,
+            "case list": render_case_list,
+            "case show": render_case_show,
+            "case attach": render_case_attach,
+            "case timeline": render_case_timeline,
+            "case finding": render_case_finding,
+            "case findings": render_case_findings,
+            "case link": render_case_link,
+            "case note": render_case_note,
+            "case report": render_case_report,
+            "case status": render_case_status,
         }.get(result.command)
         if renderer is not None:
             return renderer(result)
@@ -1825,6 +2344,137 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=None, help="max timeline entries shown"
     )
     p_ftime.set_defaults(func=cmd_forensics_timeline)
+
+    # case group (v0.6) — incident-response engine: timeline + case management
+    case_p = sub.add_parser("case", help="incident case management")
+    case_sub = case_p.add_subparsers(dest="command", required=True)
+
+    p_ccreate = case_sub.add_parser(
+        "create", help="create a new incident case", parents=parents
+    )
+    p_ccreate.add_argument("--title", required=True, help="case title")
+    p_ccreate.add_argument("--note", default=None, help="opening analyst note")
+    p_ccreate.set_defaults(func=cmd_case_create)
+
+    p_clist = case_sub.add_parser("list", help="list all cases", parents=parents)
+    p_clist.set_defaults(func=cmd_case_list)
+
+    p_cshow = case_sub.add_parser(
+        "show", help="show case metadata, evidence and findings", parents=parents
+    )
+    p_cshow.add_argument("case_id", help="case ID, e.g. CASE-2026-001")
+    p_cshow.set_defaults(func=cmd_case_show)
+
+    p_cattach = case_sub.add_parser(
+        "attach",
+        help="copy a file into the case evidence folder (sources untouched)",
+        parents=parents,
+    )
+    p_cattach.add_argument("case_id", help="case ID, e.g. CASE-2026-001")
+    p_cattach.add_argument(
+        "--kind",
+        required=True,
+        choices=["network", "logs", "files"],
+        help="evidence kind",
+    )
+    p_cattach.add_argument("--source", required=True, help="file to copy into the case")
+    p_cattach.set_defaults(func=cmd_case_attach)
+
+    p_ctime = case_sub.add_parser(
+        "timeline",
+        help="unified chronological timeline across all case evidence",
+        parents=parents,
+    )
+    p_ctime.add_argument("case_id", help="case ID, e.g. CASE-2026-001")
+    p_ctime.add_argument(
+        "--limit", type=int, default=None, help="max timed entries shown"
+    )
+    p_ctime.set_defaults(func=cmd_case_timeline)
+
+    p_cfinding = case_sub.add_parser(
+        "finding", help="record a finding in the case", parents=parents
+    )
+    p_cfinding.add_argument("case_id", help="case ID, e.g. CASE-2026-001")
+    p_cfinding.add_argument("--title", required=True, help="finding title")
+    p_cfinding.add_argument(
+        "--severity",
+        required=True,
+        choices=["info", "low", "medium", "high", "critical"],
+        help="finding severity",
+    )
+    p_cfinding.add_argument(
+        "--confidence",
+        required=True,
+        type=int,
+        help="confidence 0-100",
+    )
+    p_cfinding.add_argument("--detail", default="", help="finding detail")
+    p_cfinding.set_defaults(func=cmd_case_finding)
+
+    p_cfindings = case_sub.add_parser(
+        "findings", help="list findings tracked in the case", parents=parents
+    )
+    p_cfindings.add_argument("case_id", help="case ID, e.g. CASE-2026-001")
+    p_cfindings.add_argument(
+        "--status",
+        default=None,
+        choices=["open", "investigating", "resolved", "false-positive"],
+        help="only findings in this lifecycle state",
+    )
+    p_cfindings.set_defaults(func=cmd_case_findings)
+
+    p_clink = case_sub.add_parser(
+        "link", help="link an indicator to a finding", parents=parents
+    )
+    p_clink.add_argument("case_id", help="case ID, e.g. CASE-2026-001")
+    p_clink.add_argument("--finding", required=True, help="finding ID")
+    p_clink.add_argument("--indicator", required=True, help="indicator value")
+    p_clink.add_argument(
+        "--type",
+        default=None,
+        choices=["ip", "domain", "hash", "url", "email"],
+        help="indicator type (default: guessed from the value's shape)",
+    )
+    p_clink.set_defaults(func=cmd_case_link)
+
+    p_cnote = case_sub.add_parser(
+        "note", help="append an analyst note to the case", parents=parents
+    )
+    p_cnote.add_argument("case_id", help="case ID, e.g. CASE-2026-001")
+    p_cnote.add_argument("text", help="note text")
+    p_cnote.set_defaults(func=cmd_case_note)
+
+    p_creport = case_sub.add_parser(
+        "report",
+        help="generate a reproducible report bundle",
+        parents=parents,
+    )
+    p_creport.add_argument("case_id", help="case ID, e.g. CASE-2026-001")
+    p_creport.add_argument(
+        "--output", required=True, help="directory for the report bundle"
+    )
+    p_creport.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite a non-empty output directory",
+    )
+    p_creport.set_defaults(func=cmd_case_report)
+
+    p_cstatus = case_sub.add_parser(
+        "status",
+        help="show or change the case status (closing needs --note)",
+        parents=parents,
+    )
+    p_cstatus.add_argument("case_id", help="case ID, e.g. CASE-2026-001")
+    p_cstatus.add_argument(
+        "status",
+        nargs="?",
+        default=None,
+        choices=["open", "in-progress", "closed"],
+        help="new status (omit to show the current status)",
+    )
+    p_cstatus.add_argument("--note", default=None, help="note for the transition")
+    p_cstatus.set_defaults(func=cmd_case_status)
 
     return parser
 

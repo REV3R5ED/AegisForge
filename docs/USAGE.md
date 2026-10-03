@@ -230,3 +230,62 @@ files by SHA-256, and `forensics timeline` lists mtime/atime/ctime
 chronologically — labeled as filesystem metadata, not content claims.
 Unreadable files and dangling symlinks become warnings, never
 crashes, and directory symlinks are never followed.
+
+## What's next — v0.6: the incident-response engine
+
+> **Scenario continues:** the brute-force burst and the suspicious
+> binary are not isolated curiosities — they are one incident. You
+> open a case, attach the auth log and the binary as evidence, and
+> let AegisForge merge everything into a single timeline.
+
+```console
+$ aegisforge case create --title "Web server intrusion"
+case CASE-2026-001 created: Web server intrusion
+
+$ aegisforge case attach CASE-2026-001 --kind logs --source auth.log
+attached auth.log to CASE-2026-001 as CASE-2026-001-E01 (sha256 f2ca5a8b11029155…)
+
+$ aegisforge case attach CASE-2026-001 --kind files --source dropper.bin
+attached dropper.bin to CASE-2026-001 as CASE-2026-001-E02 (sha256 842e109b9642998c…)
+
+$ aegisforge case timeline CASE-2026-001
+CASE-2026-001: 4 timed event(s), 0 untimed event(s)
+
+TIMESTAMP (UTC)             SOURCE            KIND       SUMMARY
+2026-10-03T01:09:24.721914Z files:dropper.bin file-mtime mtime of dropper.bin
+2026-10-03T02:10:01Z        logs:auth.log     log-event  Failed password for root from 203.0.113.7
+2026-10-03T02:10:05Z        logs:auth.log     log-event  Failed password for admin from 203.0.113.7
+
+$ aegisforge case finding CASE-2026-001 --title "SSH brute force" \
+    --severity high --confidence 85
+finding CASE-2026-001-F01 recorded: SSH brute force [high]
+
+$ aegisforge case link CASE-2026-001 --finding CASE-2026-001-F01 \
+    --indicator 203.0.113.7
+linked '203.0.113.7' (ip, type guessed) to CASE-2026-001-F01
+```
+
+![Case timeline merging log events and file mtimes, with finding and indicator linking](images/07-case-timeline.png)
+
+Attaching **copies** the file into the case — the source is opened
+read-only and never modified, moved, or deleted — and records its
+SHA-256 alongside the original path and the UTC attach time. The
+unified timeline merges every evidence kind into one chronological
+stream with per-event source labels: log events come from the logs/
+auto-detection and streaming parsers, file mtimes from the forensics/
+inventory, and network scan events from AegisForge JSON result
+envelopes. Anything without a parseable timestamp lands in a separate
+untimed section — listed, never silently dropped.
+
+Findings get `CASE-2026-001-F01`-style IDs and move through
+`open` → `investigating` → `resolved` / `false-positive`. Indicators
+link to findings with their type guessed from the value's shape
+(ip / domain / hash / url / email) unless you pass `--type` — and the
+record always says which happened, because a guess is not a
+classification. Notes are append-only, and closing a case requires a
+closing `--note`, so the resolution is always on the record.
+
+`case report` assembles the reproducible bundle — case metadata,
+evidence manifest, timeline (JSON + CSV), findings, notes — plus a
+report manifest with the SHA-256 of every artifact, so anyone can
+verify the bundle hasn't changed since it was generated.

@@ -5,6 +5,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-03
+
+### Added
+
+- Incident-response engine (`cases/`, v0.6): case creation and metadata,
+  evidence folders and manifests, unified timelines, finding tracking,
+  indicator linking, analyst notes and reproducible report artifacts.
+- `aegisforge case create --title "..." [--note "..."]` allocates
+  `CASE-2026-001`-style IDs (year prefix + zero-padded persisted
+  sequence) and a case folder layout
+  (`evidence/{network,logs,files}/`, `timeline/`, `findings/`,
+  `report/`, `case.json`); `case list` / `case show` inspect cases.
+- `aegisforge case attach CASE-ID --kind [network|logs|files]
+  --source PATH` copies (never moves) the file into the case, hashes
+  it with SHA-256, and records hash + original path + UTC attach time.
+  Sources are opened read-only and never modified.
+- `aegisforge case timeline CASE-ID` merges every evidence source into
+  one chronological stream with per-event source labels: log events
+  (logs/ auto-detection + streaming parsers), file mtime claims
+  (forensics/ inventory), network scan events (AegisForge JSON result
+  envelopes). Events without parseable timestamps land in a separate
+  untimed section — never dropped silently.
+- `aegisforge case finding CASE-ID --title --severity --confidence
+  --detail` tracks findings with lifecycle states
+  (`open` → `investigating` → `resolved`/`false-positive`);
+  `case findings` lists them (filterable by `--status`).
+- `aegisforge case link CASE-ID --finding F-ID --indicator VALUE
+  [--type ...]` links indicators; the type is guessed from the value's
+  shape (ip/domain/hash/url/email) unless the analyst specifies it,
+  and the record always says which happened.
+- `aegisforge case note CASE-ID "text"` appends analyst notes
+  (append-only, UTC timestamps).
+- `aegisforge case report CASE-ID --output DIR` builds a reproducible
+  bundle (`case.json`, `evidence-manifest.json`, `timeline.json` +
+  `timeline.csv`, `findings.json`, `notes.txt`,
+  `report-manifest.json` with SHA-256 of every artifact). A non-empty
+  output directory is refused unless `--force` is passed.
+- `aegisforge case status CASE-ID [open|in-progress|closed]` shows or
+  changes the case status; closing requires `--note` (exit 2 otherwise).
+
 ## [0.4.0] - 2026-10-03
 
 > **Numbering note:** this is the master plan's v0.4 (Digital Forensics).
