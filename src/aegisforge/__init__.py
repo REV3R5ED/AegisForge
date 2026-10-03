@@ -6,11 +6,14 @@ port/service analysis with baselines + domain/DNS investigation
 Apache/Nginx, JSON lines, Windows Event XML, key=value) with
 auto-detection, timeline, burst detection and observed-vs-inferred
 findings.
-Later phases (forensics, PCAP, intel, correlation, cases,
-reporting) plug into the core models defined here.
+v1.0: reporting (professional HTML/PDF/JSON/CSV reports with
+observed-vs-inferred findings, executive summaries, methodology,
+evidence inventories, timelines and indicators). The v1.x CLI is
+stable: commands and flags are not renamed without deprecation.
+Later phases (v2.x API & UI) plug into the core models defined here.
 """
 
-__version__ = "0.9.0"
+__version__ = "1.0.0"
 __author__ = "Pouya Shini Karim"
 
 from aegisforge.core import (
