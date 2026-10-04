@@ -128,7 +128,6 @@ from aegisforge.cli.commands.report import (
 )
 from aegisforge.core import config as config_mod
 from aegisforge.core.config import AppConfig, ConfigError
-from aegisforge.core.license import print_trial_notice, trial_status
 from aegisforge.core.logging import audit_log, configure_logging, get_logger
 from aegisforge.core.plugins import get_registry
 from aegisforge.core.results import EXIT_ERROR, Result, exit_code_for
@@ -215,8 +214,8 @@ def build_parser() -> argparse.ArgumentParser:
         "(v1.0: core + network discovery + port/service analysis + domain "
         "investigation + log analysis + digital forensics + incident-response "
         "engine + offline PCAP analysis + threat-intel enrichment + "
-        "correlation engine + professional reporting). Commercial "
-        "software: 1-week free trial, see LICENSE.",
+        "correlation engine + professional reporting). Open source "
+        "software (MIT), see LICENSE.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
@@ -949,9 +948,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     configure_logging(args.verbose)
-
-    # Friendly trial notice on startup (stderr, non-blocking, no lockout in v0.1).
-    print_trial_notice(trial_status())
 
     try:
         overrides: dict[str, Any] = {}

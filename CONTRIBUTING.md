@@ -1,16 +1,13 @@
 # Contributing
 
-AegisForge is commercial, proprietary software. Contributions are welcome
-from the community, but note the licensing terms before you start.
+AegisForge is open source software under the MIT license (since v1.1.0).
+Contributions are welcome from the community.
 
 ## License terms for contributors
 
-- AegisForge is **not** open source. It is proprietary software with a
-  7-day free trial (see [LICENSE](LICENSE)).
+- AegisForge is **open source** under the MIT license (see [LICENSE](LICENSE)).
 - By submitting a pull request or patch, you agree that your
-  contribution becomes the property of the copyright holder
-  (Pouya Shini Karim) and may be incorporated into the commercial
-  product under its proprietary license.
+  contribution will be licensed under the same MIT license.
 - Do not submit code you do not have the rights to contribute.
 
 ## Development setup

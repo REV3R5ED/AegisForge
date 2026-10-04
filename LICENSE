@@ -1,65 +1,21 @@
-AEGISFORGE COMMERCIAL LICENSE — 1-WEEK FREE TRIAL
+MIT License
 
-Copyright (c) 2026 Pouya Shini Karim. All rights reserved.
+Copyright (c) 2026 Pouya Shini Karim
 
-1. DEFINITIONS
-   "Software" means the AegisForge program, including its source code,
-   compiled forms, documentation, and any updates provided by the author.
-   "You" means the individual or entity installing or using the Software.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-2. FREE TRIAL GRANT
-   The author grants You a limited, non-exclusive, non-transferable,
-   revocable license to install and use the Software for evaluation
-   purposes only, free of charge, for seven (7) calendar days from the
-   date of first use (the "Trial Period"). Use during the Trial Period
-   is limited to evaluation within Your own environment.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-3. COMMERCIAL LICENSE REQUIRED AFTER TRIAL
-   Any use of the Software after the Trial Period — including continued
-   evaluation, production, or commercial use — requires the purchase of
-   a commercial license from the author. Contact the author to purchase.
-   Use after the Trial Period without a commercial license is a breach
-   of this agreement and terminates all rights granted herein.
-
-4. RESTRICTIONS
-   You may not, and may not permit others to:
-   (a) redistribute, resell, sublicense, rent, lease, or otherwise make
-       the Software available to third parties;
-   (b) copy the Software except for a reasonable number of backup copies;
-   (c) reverse engineer, decompile, or disassemble the Software, except
-       where such restriction is prohibited by applicable law;
-   (d) remove, alter, or obscure any copyright, trademark, or proprietary
-       notices in the Software;
-   (e) use the Software to violate any law, or to attack, probe, or
-       assess the security of systems You are not authorized to test.
-       You are solely responsible for ensuring You have authorization
-       for every target You analyze with the Software.
-
-5. OWNERSHIP
-   The Software is licensed, not sold. The author retains all right,
-   title, and interest in and to the Software, including all intellectual
-   property rights.
-
-6. NO WARRANTY
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
-   NONINFRINGEMENT. THE AUTHOR DOES NOT WARRANT THAT THE SOFTWARE IS
-   ERROR-FREE, SECURE, OR SUITABLE FOR FORENSIC OR EVIDENTIARY PURPOSES.
-
-7. LIMITATION OF LIABILITY
-   TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE AUTHOR SHALL NOT BE LIABLE
-   FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE
-   DAMAGES, OR ANY LOSS OF PROFITS, DATA, OR GOODWILL, ARISING FROM OR
-   RELATED TO THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
-   DAMAGES. THE AUTHOR'S TOTAL LIABILITY SHALL NOT EXCEED THE AMOUNT YOU
-   PAID FOR THE SOFTWARE.
-
-8. TERMINATION
-   This license terminates automatically if You breach any term. Upon
-   termination You must cease all use and destroy all copies of the
-   Software.
-
-9. GENERAL
-   This agreement is governed by the laws of British Columbia, Canada,
-   without regard to conflict-of-law principles.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

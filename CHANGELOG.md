@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-04
+
+### Changed
+
+- **License: proprietary → MIT.** AegisForge is now fully open source
+  under the MIT license. The author decided to open-source it to help
+  the cybersecurity community.
+- Removed the 7-day trial machinery (`core/license.py`, startup trial
+  notice, `AEGISFORGE_NO_TRIAL_CHECK` bypass). The CLI no longer prints
+  trial notices or tracks first use.
+
 ## [1.0.0] - 2026-10-03
 
 ### Added

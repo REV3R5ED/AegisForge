@@ -12,8 +12,7 @@ from aegisforge.network.trace import TraceHop, TraceResult
 
 
 @pytest.fixture(autouse=True)
-def _no_trial_check(monkeypatch):
-    monkeypatch.setenv("AEGISFORGE_NO_TRIAL_CHECK", "1")
+def _isolated_state(monkeypatch):
     monkeypatch.setenv("AEGISFORGE_STATE_DIR", "/tmp/aegisforge-test-state")
 
 
@@ -233,14 +232,6 @@ def test_audit_log_written(monkeypatch, tmp_path):
     main(["network", "subnet", "10.0.0.0/24"])
     content = (tmp_path / "audit.log").read_text(encoding="utf-8")
     assert "network subnet" in content
-
-
-def test_trial_notice_printed_on_startup(monkeypatch, capsys, tmp_path):
-    monkeypatch.delenv("AEGISFORGE_NO_TRIAL_CHECK", raising=False)
-    monkeypatch.setenv("AEGISFORGE_STATE_DIR", str(tmp_path / "state"))
-    main(["network", "subnet", "10.0.0.0/24"])
-    err = capsys.readouterr().err
-    assert "Trial:" in err
 
 
 def test_parser_has_help_for_all_commands():
