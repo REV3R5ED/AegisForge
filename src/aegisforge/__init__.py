@@ -13,7 +13,7 @@ stable: commands and flags are not renamed without deprecation.
 Later phases (v2.x API & UI) plug into the core models defined here.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "Pouya Shini Karim"
 
 from aegisforge.core import (

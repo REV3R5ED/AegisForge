@@ -12,7 +12,6 @@ from aegisforge.network.scanner import PortResult, ScanResult
 
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch, tmp_path):
-    monkeypatch.setenv("AEGISFORGE_NO_TRIAL_CHECK", "1")
     monkeypatch.setenv("AEGISFORGE_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("AEGISFORGE_AUDIT_LOG", str(tmp_path / "audit.log"))
 

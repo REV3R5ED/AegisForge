@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aegisforge"
-version = "1.0.0"
+version = "1.1.0"
 description = "AegisForge — modular defensive-security and DFIR platform (core, network discovery, port/service analysis, domain investigation, log analysis, digital forensics, incident-response engine, offline PCAP analysis, threat-intel enrichment)"
 readme = "README.md"
 requires-python = ">=3.10"

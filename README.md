@@ -3,18 +3,16 @@
 A modular defensive-security and incident-response (DFIR) platform for
 operators who need trustworthy, auditable network and host discovery.
 
-> **Commercial software — 1-week free trial.** You may evaluate
-> AegisForge free for **7 days from first use**. Continued use after the
-> trial requires purchasing a commercial license from the author.
-> Redistribution and sublicensing are not permitted. See [LICENSE](LICENSE)
-> for the full terms. Provided as-is, without warranty.
+> **Open source (MIT).** AegisForge was commercial software with a 1-week
+> free trial until v1.0. Starting with **v1.1.0** it is fully open source
+> under the MIT license — the author decided to open-source it to help
+> the cybersecurity community. See [LICENSE](LICENSE) for the full terms.
+> Provided as-is, without warranty.
 >
 > Copyright (c) 2026 Pouya Shini Karim.
 
-The CLI prints a friendly `Trial: N days remaining` notice on startup.
-In v0.2 there is **no lockout** — the licensing seam is in place
-(`aegisforge/core/license.py`) and commercial enforcement activates in a
-later release.
+AegisForge is open source (MIT) since v1.1.0 — no trial, no license keys,
+no notices. Just run it.
 
 ## What v1.0 does
 
@@ -325,7 +323,6 @@ aegisforge --version
 
 ```console
 $ aegisforge network subnet 192.168.1.0/24
-Trial: 7 day(s) of free trial remaining.
 192.168.1.0/24: 256 addresses (254 usable)
 
 calculator:

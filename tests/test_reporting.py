@@ -134,7 +134,7 @@ def test_case_report_data_has_every_section(tmp_path: Path, cases_home: Path) ->
     ):
         assert key in data, f"missing section {key!r}"
     assert data["report_kind"] == "case"
-    assert data["tool_version"] == "1.0.0"
+    assert data["tool_version"] == "1.1.0"
 
 
 def test_executive_summary_counts_match_case(tmp_path: Path, cases_home: Path) -> None:
@@ -498,7 +498,7 @@ def test_report_logs_missing_file_fails(tmp_path: Path, cases_home: Path) -> Non
 def test_version_command(tmp_path: Path, cases_home: Path) -> None:
     code, text = _run_cli(["version"])
     assert code == 0
-    assert "aegisforge 1.0.0" in text
+    assert "aegisforge 1.1.0" in text
     assert "reporting: 1.0.0" in text
 
 
@@ -513,7 +513,7 @@ def test_version_json(tmp_path: Path, cases_home: Path) -> None:
     code, text = _run_cli(["version", "--json"])
     assert code == 0
     envelope = json.loads(text)
-    assert envelope["data"]["version"] == "1.0.0"
+    assert envelope["data"]["version"] == "1.1.0"
     assert envelope["data"]["modules"]["reporting"] == "1.0.0"
 
 

@@ -29,8 +29,6 @@ opening a public issue:
 - The tool never exfiltrates data: all output goes to stdout/files the
   operator chooses.
 
-## License and trial
+## License
 
-AegisForge is commercial software with a 7-day free trial (see
-LICENSE). Security fixes are provided to licensed users; trial users
-receive the latest release as published.
+AegisForge is open source under the MIT license (see LICENSE).
